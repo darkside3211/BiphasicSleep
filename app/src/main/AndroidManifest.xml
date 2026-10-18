@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
@@ -56,9 +56,9 @@
             android:enabled="true"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.antigravity.biphasicsleep.ACTION_TRIGGER_ALARM" />
-                <action android:name="com.antigravity.biphasicsleep.ACTION_ANTI_BACKSLIDE_CHECK" />
-                <action android:name="com.antigravity.biphasicsleep.ACTION_CONFIRM_AWAKE" />
+                <action android:name="com.darkside3211.biphasicsleep.ACTION_TRIGGER_ALARM" />
+                <action android:name="com.darkside3211.biphasicsleep.ACTION_ANTI_BACKSLIDE_CHECK" />
+                <action android:name="com.darkside3211.biphasicsleep.ACTION_CONFIRM_AWAKE" />
             </intent-filter>
         </receiver>
 

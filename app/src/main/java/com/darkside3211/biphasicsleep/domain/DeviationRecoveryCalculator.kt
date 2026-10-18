@@ -1,4 +1,4 @@
-package com.antigravity.biphasicsleep.domain
+﻿package com.darkside3211.biphasicsleep.domain
 
 import java.time.DayOfWeek
 import java.time.Duration

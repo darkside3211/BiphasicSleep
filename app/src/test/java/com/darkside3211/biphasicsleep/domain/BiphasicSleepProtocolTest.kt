@@ -1,4 +1,4 @@
-package com.antigravity.biphasicsleep.domain
+﻿package com.darkside3211.biphasicsleep.domain
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -126,7 +126,7 @@ class BiphasicSleepProtocolTest {
 
     @Test
     fun `verify all simulation presets initialize and evaluate without error`() {
-        val presets = com.antigravity.biphasicsleep.ui.SimulationPreset.entries
+        val presets = com.darkside3211.biphasicsleep.ui.SimulationPreset.entries
         assertEquals(8, presets.size)
         presets.forEach { preset ->
             val dt = preset.simulatedDateTime ?: ZonedDateTime.now(zone)

@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.antigravity.biphasicsleep"
+    namespace = "com.darkside3211.biphasicsleep"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.antigravity.biphasicsleep"
+        applicationId = "com.darkside3211.biphasicsleep"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

@@ -1,4 +1,4 @@
-# Biphasic Sleep Anchoring Protocol
+﻿# Biphasic Sleep Anchoring Protocol
 
 A native Android application (**Kotlin + Jetpack Compose**, Material 3 Circadian Dark UI) engineered to automate a **3-cycle (`4h 44m`) biphasic work-week sleep schedule** and a **zero-nap, cycle-capped weekend transition protocol** without triggering circadian flips or `03:00` shift microsleeps.
 
@@ -89,7 +89,7 @@ Configurable and combinable wake verification mechanisms to prevent turning a 20
 ## Project Structure
 
 ```text
-app/src/main/java/com/antigravity/biphasicsleep/
+app/src/main/java/com/darkside3211/biphasicsleep/
 ├── alarm/
 │   ├── AlarmReceiver.kt                  # BroadcastReceiver for primary & 5m anti-backslide alarms
 │   ├── AlarmRingingService.kt            # Foreground service with wake lock, alarm audio & vibration

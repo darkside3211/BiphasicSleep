@@ -1,4 +1,4 @@
-package com.antigravity.biphasicsleep.ui
+﻿package com.darkside3211.biphasicsleep.ui
 
 import android.Manifest
 import android.os.Build
@@ -101,17 +101,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.antigravity.biphasicsleep.alarm.ArmedAlarmInfo
-import com.antigravity.biphasicsleep.alarm.HybridAlarmScheduler
-import com.antigravity.biphasicsleep.alarm.PendingAntiBackslideInfo
-import com.antigravity.biphasicsleep.domain.AdvisorySeverity
-import com.antigravity.biphasicsleep.domain.DeviationRecoveryCalculator
-import com.antigravity.biphasicsleep.domain.GuardrailPermission
-import com.antigravity.biphasicsleep.domain.PhysiologicalAdvisory
-import com.antigravity.biphasicsleep.domain.ProtocolStateId
-import com.antigravity.biphasicsleep.domain.SleepActionOption
-import com.antigravity.biphasicsleep.domain.SleepBlockType
-import com.antigravity.biphasicsleep.domain.WeekendLockoutStatus
+import com.darkside3211.biphasicsleep.alarm.ArmedAlarmInfo
+import com.darkside3211.biphasicsleep.alarm.HybridAlarmScheduler
+import com.darkside3211.biphasicsleep.alarm.PendingAntiBackslideInfo
+import com.darkside3211.biphasicsleep.domain.AdvisorySeverity
+import com.darkside3211.biphasicsleep.domain.DeviationRecoveryCalculator
+import com.darkside3211.biphasicsleep.domain.GuardrailPermission
+import com.darkside3211.biphasicsleep.domain.PhysiologicalAdvisory
+import com.darkside3211.biphasicsleep.domain.ProtocolStateId
+import com.darkside3211.biphasicsleep.domain.SleepActionOption
+import com.darkside3211.biphasicsleep.domain.SleepBlockType
+import com.darkside3211.biphasicsleep.domain.WeekendLockoutStatus
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
 
@@ -586,7 +586,7 @@ private fun SleepScreen(
 private fun HeroPrimarySleepCard(
     primaryOption: SleepActionOption,
     currentState: ProtocolStateId,
-    config: com.antigravity.biphasicsleep.domain.SleepProtocolConfig,
+    config: com.darkside3211.biphasicsleep.domain.SleepProtocolConfig,
     onArmPrimary: () -> Unit,
     onArmSystemClock: () -> Unit
 ) {
@@ -1509,7 +1509,7 @@ private fun MetricTile(
  */
 @Composable
 private fun VerticalTimelineStepItem(
-    step: com.antigravity.biphasicsleep.domain.RecoveryStep,
+    step: com.darkside3211.biphasicsleep.domain.RecoveryStep,
     isLast: Boolean
 ) {
     val nodeColor = if (step.isCriticalGuardrail) CircadianAmber else AnchorCyan
@@ -2009,7 +2009,7 @@ private fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             OutlinedButton(
-                onClick = { viewModel.updateConfig { com.antigravity.biphasicsleep.domain.SleepProtocolConfig() } },
+                onClick = { viewModel.updateConfig { com.darkside3211.biphasicsleep.domain.SleepProtocolConfig() } },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             ) {

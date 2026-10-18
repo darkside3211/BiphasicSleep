@@ -1,4 +1,4 @@
-package com.antigravity.biphasicsleep.ui
+﻿package com.darkside3211.biphasicsleep.ui
 
 import android.os.Build
 import android.os.Bundle
@@ -54,12 +54,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.antigravity.biphasicsleep.alarm.AlarmRingingService
-import com.antigravity.biphasicsleep.alarm.HybridAlarmScheduler
-import com.antigravity.biphasicsleep.challenge.BarcodeScannerChallengeView
-import com.antigravity.biphasicsleep.challenge.StepCounterChallengeController
-import com.antigravity.biphasicsleep.domain.ProtocolStateId
-import com.antigravity.biphasicsleep.domain.SleepBlockType
+import com.darkside3211.biphasicsleep.alarm.AlarmRingingService
+import com.darkside3211.biphasicsleep.alarm.HybridAlarmScheduler
+import com.darkside3211.biphasicsleep.challenge.BarcodeScannerChallengeView
+import com.darkside3211.biphasicsleep.challenge.StepCounterChallengeController
+import com.darkside3211.biphasicsleep.domain.ProtocolStateId
+import com.darkside3211.biphasicsleep.domain.SleepBlockType
 
 /**
  * Full-Screen Wake-Up Confirmation & Anti-Backslide Challenge Activity.

@@ -1,16 +1,16 @@
-package com.antigravity.biphasicsleep.ui
+﻿package com.darkside3211.biphasicsleep.ui
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.antigravity.biphasicsleep.alarm.HybridAlarmScheduler
-import com.antigravity.biphasicsleep.domain.CircadianStateMachine
-import com.antigravity.biphasicsleep.domain.DeviationInput
-import com.antigravity.biphasicsleep.domain.DeviationRecoveryCalculator
-import com.antigravity.biphasicsleep.domain.DeviationRecoveryPlan
-import com.antigravity.biphasicsleep.domain.PhaseEvaluation
-import com.antigravity.biphasicsleep.domain.SleepBlockType
-import com.antigravity.biphasicsleep.domain.SleepProtocolConfig
+import com.darkside3211.biphasicsleep.alarm.HybridAlarmScheduler
+import com.darkside3211.biphasicsleep.domain.CircadianStateMachine
+import com.darkside3211.biphasicsleep.domain.DeviationInput
+import com.darkside3211.biphasicsleep.domain.DeviationRecoveryCalculator
+import com.darkside3211.biphasicsleep.domain.DeviationRecoveryPlan
+import com.darkside3211.biphasicsleep.domain.PhaseEvaluation
+import com.darkside3211.biphasicsleep.domain.SleepBlockType
+import com.darkside3211.biphasicsleep.domain.SleepProtocolConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

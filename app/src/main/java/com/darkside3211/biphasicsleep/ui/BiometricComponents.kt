@@ -1,4 +1,4 @@
-package com.antigravity.biphasicsleep.ui
+﻿package com.darkside3211.biphasicsleep.ui
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -42,8 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.antigravity.biphasicsleep.domain.GuardrailPermission
-import com.antigravity.biphasicsleep.domain.SleepBlockType
+import com.darkside3211.biphasicsleep.domain.GuardrailPermission
+import com.darkside3211.biphasicsleep.domain.SleepBlockType
 import java.time.LocalTime
 
 /**

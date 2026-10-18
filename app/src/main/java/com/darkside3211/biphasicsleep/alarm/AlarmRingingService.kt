@@ -1,4 +1,4 @@
-package com.antigravity.biphasicsleep.alarm
+﻿package com.darkside3211.biphasicsleep.alarm
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -17,7 +17,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
-import com.antigravity.biphasicsleep.ui.AlarmChallengeActivity
+import com.darkside3211.biphasicsleep.ui.AlarmChallengeActivity
 
 class AlarmRingingService : Service() {
 

@@ -1,4 +1,4 @@
-package com.antigravity.biphasicsleep.alarm
+﻿package com.darkside3211.biphasicsleep.alarm
 
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -6,11 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.AlarmClock
-import com.antigravity.biphasicsleep.domain.ProtocolStateId
-import com.antigravity.biphasicsleep.domain.SleepBlockType
-import com.antigravity.biphasicsleep.domain.SleepProtocolConfig
-import com.antigravity.biphasicsleep.ui.AlarmChallengeActivity
-import com.antigravity.biphasicsleep.ui.MainActivity
+import com.darkside3211.biphasicsleep.domain.ProtocolStateId
+import com.darkside3211.biphasicsleep.domain.SleepBlockType
+import com.darkside3211.biphasicsleep.domain.SleepProtocolConfig
+import com.darkside3211.biphasicsleep.ui.AlarmChallengeActivity
+import com.darkside3211.biphasicsleep.ui.MainActivity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,9 +53,9 @@ data class PendingAntiBackslideInfo(
  */
 object HybridAlarmScheduler {
 
-    const val ACTION_TRIGGER_ALARM = "com.antigravity.biphasicsleep.ACTION_TRIGGER_ALARM"
-    const val ACTION_ANTI_BACKSLIDE_CHECK = "com.antigravity.biphasicsleep.ACTION_ANTI_BACKSLIDE_CHECK"
-    const val ACTION_CONFIRM_AWAKE = "com.antigravity.biphasicsleep.ACTION_CONFIRM_AWAKE"
+    const val ACTION_TRIGGER_ALARM = "com.darkside3211.biphasicsleep.ACTION_TRIGGER_ALARM"
+    const val ACTION_ANTI_BACKSLIDE_CHECK = "com.darkside3211.biphasicsleep.ACTION_ANTI_BACKSLIDE_CHECK"
+    const val ACTION_CONFIRM_AWAKE = "com.darkside3211.biphasicsleep.ACTION_CONFIRM_AWAKE"
 
     const val EXTRA_BLOCK_TYPE = "extra_block_type"
     const val EXTRA_STATE_ID = "extra_state_id"
