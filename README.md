@@ -132,7 +132,16 @@ app/src/main/java/com/antigravity/biphasicsleep/
 ```
 
 ### Build Debug APK
+
 ```powershell
+
+.\gradlew.bat assembleDebug
+
+```
+
+The compiled APK will be generated at `app/build/outputs/apk/debug/app-debug.apk`. 
+
+---
 
 ---
 
@@ -157,6 +166,3 @@ This project is released under a **Source-Available Non-Commercial & Attribution
 - **No Commercial Use or App Store Redistribution:** No person or entity other than the original author may monetize this work, repackage it into a paid or ad-supported product, or upload copies/derivatives to the Google Play Store, Apple App Store, or third-party APK repositories.
 
 See the [LICENSE](LICENSE) file for the full legal terms.
-.\gradlew.bat assembleDebug
-```
-The compiled APK will be generated at `app/build/outputs/apk/debug/app-debug.apk`.
