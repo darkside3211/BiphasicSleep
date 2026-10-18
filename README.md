@@ -133,6 +133,30 @@ app/src/main/java/com/antigravity/biphasicsleep/
 
 ### Build Debug APK
 ```powershell
+
+---
+
+## Why is this free? (And how to support)
+
+I built **BiphasicSleep** for myself to survive a `21:00` – `06:00` night shift without wrecking my circadian rhythm. Sleep utilities shouldn't lock basic ultradian math or alarm guardrails behind a monthly paywall or intrusive ads, so this app is—and will always be—**100% free**.
+
+The full source code is publicly available here so anyone can inspect the state-machine logic, compile the APK locally for personal use, or reference the architecture.
+
+If this app helped you survive your night shift or fixed your sleep schedule and you want to fuel my next `02:00` coffee:
+- ☕ **Support / Tip Jar:** *(Ko-fi / Buy Me a Coffee link coming soon)*
+
+---
+
+## License & Attribution
+
+Copyright © 2026 **Gerard Dominic Baldo ([@darkside3211](https://github.com/darkside3211))**. All Rights Reserved.
+
+This project is released under a **Source-Available Non-Commercial & Attribution License**:
+- **Personal & Educational Use:** You are free to view, fork, and modify the source code strictly for personal, educational, or portfolio evaluation purposes.
+- **Mandatory Attribution:** Any fork, public reference, or modified personal build **must** retain the copyright notice and visibly credit **Gerard Dominic Baldo (`@darkside3211`)** as the original author with a direct link back to [https://github.com/darkside3211/BiphasicSleep](https://github.com/darkside3211/BiphasicSleep).
+- **No Commercial Use or App Store Redistribution:** No person or entity other than the original author may monetize this work, repackage it into a paid or ad-supported product, or upload copies/derivatives to the Google Play Store, Apple App Store, or third-party APK repositories.
+
+See the [LICENSE](LICENSE) file for the full legal terms.
 .\gradlew.bat assembleDebug
 ```
 The compiled APK will be generated at `app/build/outputs/apk/debug/app-debug.apk`.
