@@ -1,4 +1,4 @@
-﻿package com.darkside3211.biphasicsleep.domain
+package com.darkside3211.biphasicsleep.domain
 
 import java.time.Duration
 import java.time.LocalTime
@@ -29,7 +29,21 @@ data class SleepProtocolConfig(
     val caffeinePermittedTime: LocalTime = LocalTime.of(2, 0),
     val circadianNadirTime: LocalTime = LocalTime.of(3, 0),
     val boredomZoneStart: LocalTime = LocalTime.of(18, 0),
-    val boredomZoneEnd: LocalTime = LocalTime.of(23, 0),
+    val boredomZoneEnd: LocalTime = LocalTime.of(1, 0), // 18:00 - 01:00 weekend evening danger zone
+    // v2.0 Timing Constants & Hard-Lock Guardrails (Section 1)
+    val preAnchorNapCutoffMinutes: Int = 270, // 4.5 hours minimum wakefulness required before any Core or Bridge anchor
+    val postWakeCooldownMinutes: Int = 90, // 90-minute anti-backslide lockout immediately following any Core or Bridge wake-up
+    // Launch Windows (Section 4.A & 4.B)
+    val workCoreLaunchStart: LocalTime = LocalTime.of(11, 30),
+    val workCoreLaunchEnd: LocalTime = LocalTime.of(14, 0),
+    val satBridgeLaunchStart: LocalTime = LocalTime.of(6, 30),
+    val satBridgeLaunchEnd: LocalTime = LocalTime.of(9, 30),
+    val wkndCoreLaunchStart: LocalTime = LocalTime.of(0, 0),
+    val wkndCoreLaunchEnd: LocalTime = LocalTime.of(2, 30),
+    val monBridgeLaunchStart: LocalTime = LocalTime.of(0, 0),
+    val monBridgeLaunchEnd: LocalTime = LocalTime.of(2, 30),
+    val workNapLaunchStart: LocalTime = LocalTime.of(1, 0),
+    val workNapLaunchEnd: LocalTime = LocalTime.of(2, 0),
     // Hybrid Alarm & Challenge Configuration
     val mirrorToSystemClockApp: Boolean = false,
     val enableFiveMinAntiBackslide: Boolean = true,

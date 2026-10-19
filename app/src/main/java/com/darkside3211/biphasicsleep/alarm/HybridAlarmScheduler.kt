@@ -1,4 +1,4 @@
-﻿package com.darkside3211.biphasicsleep.alarm
+package com.darkside3211.biphasicsleep.alarm
 
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -75,6 +75,13 @@ object HybridAlarmScheduler {
 
     private val _pendingAntiBackslide = MutableStateFlow<PendingAntiBackslideInfo?>(null)
     val pendingAntiBackslide: StateFlow<PendingAntiBackslideInfo?> = _pendingAntiBackslide.asStateFlow()
+
+    private val _lastVerifiedWakeMillis = MutableStateFlow<Long?>(null)
+    val lastVerifiedWakeMillis: StateFlow<Long?> = _lastVerifiedWakeMillis.asStateFlow()
+
+    fun recordManualWakeEvent(wakeMillis: Long = System.currentTimeMillis()) {
+        _lastVerifiedWakeMillis.value = wakeMillis
+    }
 
     fun scheduleSleepBlockAlarm(
         context: Context,
@@ -244,6 +251,7 @@ object HybridAlarmScheduler {
             checkInTriggerMillis = triggerMillis,
             delayMinutes = delayMinutes
         )
+        _lastVerifiedWakeMillis.value = nowMillis
         _pendingAntiBackslide.value = info
         _armedAlarm.value = null
         return info
@@ -261,6 +269,7 @@ object HybridAlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(pendingIntent)
+        _lastVerifiedWakeMillis.value = System.currentTimeMillis()
         _pendingAntiBackslide.value = null
     }
 
