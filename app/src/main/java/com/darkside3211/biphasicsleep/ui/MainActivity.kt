@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -1409,6 +1410,37 @@ private fun PhysiologicalRuleCard(advisory: PhysiologicalAdvisory) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun QuickTimeAdjustButton(
+    label: String,
+    accentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .height(32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, accentColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        color = accentColor.copy(alpha = 0.12f)
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                fontSize = 12.sp,
+                color = accentColor,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun RecoveryScreen(
     uiState: ProtocolUiState,
     viewModel: BiphasicProtocolViewModel,
@@ -1502,25 +1534,48 @@ private fun RecoveryScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Log Sleep Deviation",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
-                TextButton(onClick = { viewModel.setDeviationWakeToNow() }) {
-                    Icon(
-                        imageVector = Icons.Rounded.Schedule,
-                        contentDescription = null,
-                        tint = VerifiedEmerald,
-                        modifier = Modifier.size(16.dp)
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        text = "Log Sleep Deviation",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Woke Up Now", color = VerifiedEmerald, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Recompute circadian recovery & lockouts",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SoftSilver,
+                        fontSize = 11.sp
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = VerifiedEmeraldBg,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, VerifiedEmerald.copy(alpha = 0.6f)),
+                    modifier = Modifier.clickable { viewModel.setDeviationWakeToNow() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Schedule,
+                            contentDescription = null,
+                            tint = VerifiedEmerald,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Woke Up Now",
+                            color = VerifiedEmerald,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // 2-Column Time Selection Cards
             Row(
@@ -1533,12 +1588,28 @@ private fun RecoveryScreen(
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
                         .border(1.dp, ObsidianBorder, RoundedCornerShape(14.dp))
-                        .clickable { showOnsetPicker = true }
-                        .padding(14.dp),
+                        .clickable { showOnsetPicker = true },
                     color = ObsidianCardElevated
                 ) {
-                    Column {
-                        Text("SLEEP ONSET", style = MaterialTheme.typography.labelSmall, color = SoftSilver)
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "SLEEP ONSET",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SoftSilver,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.Tune,
+                                contentDescription = "Edit Sleep Onset",
+                                tint = AnchorCyan.copy(alpha = 0.7f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = DeviationRecoveryCalculator.formatTime(plan.input.sleepStartTimestamp),
@@ -1551,20 +1622,23 @@ private fun RecoveryScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MutedSlate
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            OutlinedButton(
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            QuickTimeAdjustButton(
+                                label = "-30m",
+                                accentColor = AnchorCyan,
                                 onClick = { viewModel.adjustDeviationSleepStartMinutes(-30) },
                                 modifier = Modifier.weight(1f)
-                            ) {
-                                Text("-30m", fontSize = 11.sp, color = AnchorCyan)
-                            }
-                            OutlinedButton(
+                            )
+                            QuickTimeAdjustButton(
+                                label = "+30m",
+                                accentColor = AnchorCyan,
                                 onClick = { viewModel.adjustDeviationSleepStartMinutes(30) },
                                 modifier = Modifier.weight(1f)
-                            ) {
-                                Text("+30m", fontSize = 11.sp, color = AnchorCyan)
-                            }
+                            )
                         }
                     }
                 }
@@ -1575,12 +1649,28 @@ private fun RecoveryScreen(
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
                         .border(1.dp, ObsidianBorder, RoundedCornerShape(14.dp))
-                        .clickable { showWakePicker = true }
-                        .padding(14.dp),
+                        .clickable { showWakePicker = true },
                     color = ObsidianCardElevated
                 ) {
-                    Column {
-                        Text("ACTUAL WAKE", style = MaterialTheme.typography.labelSmall, color = SoftSilver)
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "ACTUAL WAKE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SoftSilver,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.Tune,
+                                contentDescription = "Edit Actual Wake",
+                                tint = VerifiedEmerald.copy(alpha = 0.7f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = DeviationRecoveryCalculator.formatTime(plan.input.actualWakeTimestamp),
@@ -1593,20 +1683,23 @@ private fun RecoveryScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MutedSlate
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            OutlinedButton(
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            QuickTimeAdjustButton(
+                                label = "-15m",
+                                accentColor = VerifiedEmerald,
                                 onClick = { viewModel.adjustDeviationWakeTimeMinutes(-15) },
                                 modifier = Modifier.weight(1f)
-                            ) {
-                                Text("-15m", fontSize = 11.sp, color = VerifiedEmerald)
-                            }
-                            OutlinedButton(
+                            )
+                            QuickTimeAdjustButton(
+                                label = "+15m",
+                                accentColor = VerifiedEmerald,
                                 onClick = { viewModel.adjustDeviationWakeTimeMinutes(15) },
                                 modifier = Modifier.weight(1f)
-                            ) {
-                                Text("+15m", fontSize = 11.sp, color = VerifiedEmerald)
-                            }
+                            )
                         }
                     }
                 }
@@ -1615,38 +1708,90 @@ private fun RecoveryScreen(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Enforce Override on Sleep Screen Switch
+            val isOverrideActive = uiState.isDeviationOverrideAppliedToDeck
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp)),
-                color = ObsidianCardElevated
+                    .clip(RoundedCornerShape(14.dp))
+                    .border(
+                        1.dp,
+                        if (isOverrideActive) AnchorCyan.copy(alpha = 0.5f) else ObsidianBorderSubtle,
+                        RoundedCornerShape(14.dp)
+                    ),
+                color = if (isOverrideActive) Color(0xFF132238) else ObsidianCardElevated
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
                         Text(
                             text = "Apply Recovery Override to Sleep Screen",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "Enforces zero-nap lockout and overnight 2-cycle bridge caps on the home screen.",
+                            text = if (isOverrideActive) {
+                                "ACTIVE • Overriding home screen with zero-nap lockout and overnight 2-cycle bridge cap."
+                            } else {
+                                "Enforces zero-nap lockout and overnight 2-cycle bridge caps on the home screen."
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = SoftSilver,
+                            color = if (isOverrideActive) AnchorCyan else SoftSilver,
                             fontSize = 11.sp
                         )
                     }
                     Switch(
-                        checked = uiState.isDeviationOverrideAppliedToDeck,
+                        checked = isOverrideActive,
                         onCheckedChange = { viewModel.toggleApplyDeviationToDeck(it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = AnchorCyan,
-                            checkedTrackColor = Color(0xFF132238)
+                            checkedTrackColor = Color(0xFF0C2C3D)
                         )
+                    )
+                }
+            }
+        }
+
+        // Active Recovery Strategy Banner
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .border(
+                    1.dp,
+                    if (plan.enforceZeroNapLockout) CircadianAmber.copy(alpha = 0.5f) else AnchorCyan.copy(alpha = 0.4f),
+                    RoundedCornerShape(12.dp)
+                ),
+            color = if (plan.enforceZeroNapLockout) Color(0xFF26190D) else Color(0xFF0E1E2B)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = if (plan.enforceZeroNapLockout) Icons.Rounded.ShieldMoon else Icons.Rounded.CheckCircle,
+                    contentDescription = null,
+                    tint = if (plan.enforceZeroNapLockout) CircadianAmber else AnchorCyan,
+                    modifier = Modifier.size(20.dp)
+                )
+                Column {
+                    Text(
+                        text = "ACTIVE RECOVERY STRATEGY",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (plan.enforceZeroNapLockout) CircadianAmber else AnchorCyan,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 10.sp
+                    )
+                    Text(
+                        text = plan.headline,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
                     )
                 }
             }
@@ -1668,14 +1813,16 @@ private fun RecoveryScreen(
                 value = DeviationRecoveryCalculator.formatDuration(plan.actualSleepDuration),
                 subtitle = "~${plan.estimatedCyclesCompleted} Cycles + 14m",
                 accentColor = CircadianAmber,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.Bedtime
             )
             MetricTile(
                 title = "Wake Delta",
                 value = DeviationRecoveryCalculator.formatDuration(plan.wakeWindowDeltaFromBaseline),
                 subtitle = "vs Baseline",
                 accentColor = TextPrimary,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.Schedule
             )
         }
 
@@ -1688,14 +1835,16 @@ private fun RecoveryScreen(
                 value = DeviationRecoveryCalculator.formatDuration(plan.timeUntilNextAnchor),
                 subtitle = DeviationRecoveryCalculator.formatDayTime(plan.nextAnchorTimestamp),
                 accentColor = AnchorCyan,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.Lock
             )
             MetricTile(
                 title = "Overnight Cap",
                 value = if (plan.capPrecedingOvernightToTwoCycles) "2 Cycles" else "Standard 3c",
                 subtitle = if (plan.capPrecedingOvernightToTwoCycles) "3h 14m Cap" else "Normal",
                 accentColor = if (plan.capPrecedingOvernightToTwoCycles) LockoutCrimson else VerifiedEmerald,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.ShieldMoon
             )
         }
 
@@ -1706,11 +1855,13 @@ private fun RecoveryScreen(
             color = SoftSilver
         )
 
-        plan.executedRecoverySteps.forEachIndexed { index, step ->
-            VerticalTimelineStepItem(
-                step = step,
-                isLast = index == plan.executedRecoverySteps.lastIndex
-            )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            plan.executedRecoverySteps.forEachIndexed { index, step ->
+                VerticalTimelineStepItem(
+                    step = step,
+                    isLast = index == plan.executedRecoverySteps.lastIndex
+                )
+            }
         }
 
         // Oct 17–18 Incident Log Replay Card
@@ -1718,13 +1869,20 @@ private fun RecoveryScreen(
             borderColor = CircadianAmber.copy(alpha = 0.5f),
             backgroundColor = Color(0xFF22170D)
         ) {
-            Text(
-                text = "OCT 17–18 INCIDENT TEST CASE",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Black,
-                color = CircadianAmber
-            )
-            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "OCT 17–18 INCIDENT TEST CASE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black,
+                    color = CircadianAmber
+                )
+                StatusBadgePill(permission = GuardrailPermission.WARN_INSOMNIA_OR_CIRCADIAN_RISK)
+            }
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Accidental Nap Trap Simulator",
                 style = MaterialTheme.typography.titleMedium,
@@ -1737,6 +1895,51 @@ private fun RecoveryScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary
             )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF332010),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CircadianAmber.copy(alpha = 0.3f))
+                ) {
+                    Text(
+                        text = "20:00 Sat Onset",
+                        color = CircadianAmber,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF332010),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CircadianAmber.copy(alpha = 0.3f))
+                ) {
+                    Text(
+                        text = "04:27 Sun Wake",
+                        color = VerifiedEmerald,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF332010),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CircadianAmber.copy(alpha = 0.3f))
+                ) {
+                    Text(
+                        text = "5 Cycles (8h 27m)",
+                        color = TextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
             Button(
                 onClick = {
@@ -1745,7 +1948,7 @@ private fun RecoveryScreen(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = CircadianAmber),
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.PlayArrow,
@@ -1770,7 +1973,8 @@ private fun MetricTile(
     value: String,
     subtitle: String,
     accentColor: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null
 ) {
     Surface(
         modifier = modifier
@@ -1779,7 +1983,21 @@ private fun MetricTile(
         color = ObsidianCardElevated
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            Text(title, style = MaterialTheme.typography.labelSmall, color = SoftSilver)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, style = MaterialTheme.typography.labelSmall, color = SoftSilver, fontWeight = FontWeight.Bold)
+                if (icon != null) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = accentColor.copy(alpha = 0.7f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = value,
@@ -1787,6 +2005,7 @@ private fun MetricTile(
                 fontWeight = FontWeight.Black,
                 color = accentColor
             )
+            Spacer(modifier = Modifier.height(2.dp))
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MutedSlate, fontSize = 11.sp)
         }
     }
@@ -1803,17 +2022,19 @@ private fun VerticalTimelineStepItem(
     val nodeColor = if (step.isCriticalGuardrail) CircadianAmber else AnchorCyan
 
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // Vertical line with circular node
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.width(24.dp)
+            modifier = Modifier.width(28.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(28.dp)
                     .clip(CircleShape)
                     .background(nodeColor.copy(alpha = 0.2f))
                     .border(2.dp, nodeColor, CircleShape),
@@ -1824,14 +2045,14 @@ private fun VerticalTimelineStepItem(
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Black,
                     color = nodeColor,
-                    fontSize = 11.sp
+                    fontSize = 12.sp
                 )
             }
             if (!isLast) {
                 Box(
                     modifier = Modifier
                         .width(2.dp)
-                        .height(60.dp)
+                        .fillMaxHeight()
                         .background(ObsidianBorder)
                 )
             }
@@ -1841,38 +2062,86 @@ private fun VerticalTimelineStepItem(
         Surface(
             modifier = Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(14.dp))
+                .padding(bottom = if (isLast) 0.dp else 12.dp)
+                .clip(RoundedCornerShape(16.dp))
                 .border(
                     1.dp,
                     if (step.isCriticalGuardrail) CircadianAmber.copy(alpha = 0.5f) else ObsidianBorderSubtle,
-                    RoundedCornerShape(14.dp)
-                )
-                .padding(14.dp),
+                    RoundedCornerShape(16.dp)
+                ),
             color = ObsidianCardElevated
         ) {
-            Column {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Top metadata row: Time window pill on left + Guardrail pill on right
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = step.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = step.windowLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = nodeColor,
-                        fontWeight = FontWeight.Bold
-                    )
+                    // Time Window Pill
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = nodeColor.copy(alpha = 0.12f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, nodeColor.copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Schedule,
+                                contentDescription = null,
+                                tint = nodeColor,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = step.windowLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = nodeColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    // Status Badge Pill
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (step.isCriticalGuardrail) LockoutCrimsonBg else Color(0xFF132238),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (step.isCriticalGuardrail) CircadianAmber.copy(alpha = 0.5f) else AnchorCyan.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        Text(
+                            text = if (step.isCriticalGuardrail) "CRITICAL GUARDRAIL" else "PROTOCOL STEP",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (step.isCriticalGuardrail) CircadianAmber else AnchorCyan,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 9.sp,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+
+                // Step Title (Full width, no crushing or vertical character-wrapping)
+                Text(
+                    text = step.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary
+                )
+
+                // Step Description
                 Text(
                     text = step.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    lineHeight = 18.sp
                 )
             }
         }
@@ -2372,12 +2641,13 @@ private fun SimulationBottomSheetContent(
                             if (isSelected) AnchorCyan else ObsidianBorderSubtle,
                             RoundedCornerShape(14.dp)
                         )
-                        .clickable { onSelectPreset(preset) }
-                        .padding(14.dp),
+                        .clickable { onSelectPreset(preset) },
                     color = if (isSelected) Color(0xFF16253B) else ObsidianCard
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
