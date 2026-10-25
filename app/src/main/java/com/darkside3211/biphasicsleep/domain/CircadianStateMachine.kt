@@ -6,10 +6,8 @@ import java.time.LocalTime
 import java.time.ZonedDateTime
 
 /**
- * Module 1, 2 & 3: Weekly State Machine Engine, State-Aware Hard-Lock Guardrails,
- * Active Wake-Window Hard Lockout (Section 4.B), and Dynamic 20m Nap Lockout Calculator (Section 4.C).
- *
- * Document Version: 2.0 (Hard-Lock Guardrail & Dynamic Nap Cutoff Patch)
+ * Module 1, 2 & 3: Weekly State Machine Engine, Event-Driven Cooldowns,
+ * Dynamic Cycle Truncation (UNFULFILLED_ANCHOR_DELAYED), and Sliding 20m Nap Calculator (v2.2).
  */
 class CircadianStateMachine(
     private val config: SleepProtocolConfig = SleepProtocolConfig()
@@ -19,24 +17,35 @@ class CircadianStateMachine(
         now: ZonedDateTime,
         activeDeviation: DeviationRecoveryPlan? = null,
         lastActualWakeTime: ZonedDateTime? = null,
-        completedAnchorAt: ZonedDateTime? = null
+        completedAnchorAt: ZonedDateTime? = null,
+        completedNapAt: ZonedDateTime? = null
     ): PhaseEvaluation {
-        val nextAnchor = resolveNextCoreOrBridgeAnchor(now)
+        val nominalNextAnchor = resolveNextCoreOrBridgeAnchor(now)
+        val effectiveCompletedAnchor = completedAnchorAt ?: lastActualWakeTime
         val primaryWindowStatus = evaluatePrimaryAnchorWindow(
             now = now,
-            nextAnchor = nextAnchor,
-            completedAnchorAt = completedAnchorAt
+            nextAnchor = nominalNextAnchor,
+            completedAnchorAt = effectiveCompletedAnchor
         )
+        val effectiveNextAnchor = primaryWindowStatus.nextScheduledAnchorTime to primaryWindowStatus.nextScheduledAnchorState
         val activeOrUpcomingState = primaryWindowStatus.activeStateId
         val isInsideShift = isWithinShiftWindow(now)
-        val weekendLockoutStatus = evaluateWeekendLockout(now, nextAnchor.second, activeDeviation)
+        val weekendLockoutStatus = evaluateWeekendLockout(
+            now = now,
+            nextAnchorState = effectiveNextAnchor.second,
+            activeDeviation = activeDeviation,
+            isAnchorCompletedForCurrentCycle = primaryWindowStatus.isAnchorCompletedForCurrentCycle,
+            effectiveNextAnchorTime = effectiveNextAnchor.first
+        )
         val napEvaluation = evaluateNapLockout(
             now = now,
-            nextAnchor = nextAnchor,
-            lastActualWake = lastActualWakeTime,
+            nextAnchor = effectiveNextAnchor,
+            lastActualWake = lastActualWakeTime ?: completedAnchorAt ?: completedNapAt,
             activeDeviation = activeDeviation,
             weekendLockout = weekendLockoutStatus,
-            isInsideShift = isInsideShift
+            isInsideShift = isInsideShift,
+            completedNapAt = completedNapAt,
+            completedAnchorAt = effectiveCompletedAnchor
         )
         val actionOptions = buildActionOptions(
             now = now,
@@ -61,10 +70,10 @@ class CircadianStateMachine(
         )
 
         val primaryBlock = primaryWindowStatus.permittedBlockType
-            ?: if (isInsideShift && isInsideNapWindow(now.toLocalTime())) {
+            ?: if (isInsideShift && !napEvaluation.isHardLocked) {
                 SleepBlockType.FLUSH_NAP_20M
             } else {
-                nextAnchor.second.let {
+                effectiveNextAnchor.second.let {
                     if (it == ProtocolStateId.STATE_BRIDGE_TO_WKND || it == ProtocolStateId.STATE_BRIDGE_TO_WORK) {
                         SleepBlockType.BRIDGE_2_CYCLES
                     } else {
@@ -90,8 +99,10 @@ class CircadianStateMachine(
     }
 
     /**
-     * Determines whether the current time falls inside an active launch window (Section 4.A),
-     * or transitions into STATE_WAKE_LOCKOUT (Section 4.B).
+     * Determines whether the current time falls inside:
+     * 1. An active scheduled launch window (when not yet completed),
+     * 2. UNFULFILLED_ANCHOR_DELAYED (when the launch window passed with 0m logged sleep and recovery cycles fit), or
+     * 3. STATE_WAKE_LOCKOUT (after sleep is completed or when inside mandatory wake stretch).
      */
     fun evaluatePrimaryAnchorWindow(
         now: ZonedDateTime,
@@ -102,26 +113,24 @@ class CircadianStateMachine(
         val time = now.toLocalTime()
         val nowMillis = now.toInstant().toEpochMilli()
 
-        // Check if an anchor block was recently completed in this window (anti-rearm cooldown)
-        val justCompletedAnchor = completedAnchorAt != null &&
-            Duration.between(completedAnchorAt, now).toMinutes() in 0..180
+        val isAnchorCompleted = isAnchorCompletedForCurrentCycle(now, completedAnchorAt)
 
-        var permittedBlockType: SleepBlockType? = null
-        var activeState: ProtocolStateId? = null
+        var scheduledBlockType: SleepBlockType? = null
+        var scheduledState: ProtocolStateId? = null
 
-        if (!justCompletedAnchor) {
+        if (!isAnchorCompleted) {
             when (day) {
                 DayOfWeek.MONDAY -> {
                     when {
                         // Monday Early AM Bridge #2 (00:00 - 02:30 window) -> STATE_BRIDGE_TO_WORK
                         isInsideTimeWindow(time, config.monBridgeLaunchStart, config.monBridgeLaunchEnd) -> {
-                            activeState = ProtocolStateId.STATE_BRIDGE_TO_WORK
-                            permittedBlockType = SleepBlockType.BRIDGE_2_CYCLES
+                            scheduledState = ProtocolStateId.STATE_BRIDGE_TO_WORK
+                            scheduledBlockType = SleepBlockType.BRIDGE_2_CYCLES
                         }
                         // Monday Afternoon Work Core (11:30 - 14:00 window) -> STATE_WORK_CORE
                         isInsideTimeWindow(time, config.workCoreLaunchStart, config.workCoreLaunchEnd) -> {
-                            activeState = ProtocolStateId.STATE_WORK_CORE
-                            permittedBlockType = SleepBlockType.CORE_3_CYCLES
+                            scheduledState = ProtocolStateId.STATE_WORK_CORE
+                            scheduledBlockType = SleepBlockType.CORE_3_CYCLES
                         }
                     }
                 }
@@ -129,8 +138,8 @@ class CircadianStateMachine(
                     when {
                         // Work Core Launch Window (11:30 - 14:00) -> STATE_WORK_CORE
                         isInsideTimeWindow(time, config.workCoreLaunchStart, config.workCoreLaunchEnd) -> {
-                            activeState = ProtocolStateId.STATE_WORK_CORE
-                            permittedBlockType = SleepBlockType.CORE_3_CYCLES
+                            scheduledState = ProtocolStateId.STATE_WORK_CORE
+                            scheduledBlockType = SleepBlockType.CORE_3_CYCLES
                         }
                     }
                 }
@@ -138,8 +147,8 @@ class CircadianStateMachine(
                     when {
                         // Saturday Morning Bridge #1 (06:30 - 09:30 window) -> STATE_BRIDGE_TO_WKND
                         isInsideTimeWindow(time, config.satBridgeLaunchStart, config.satBridgeLaunchEnd) -> {
-                            activeState = ProtocolStateId.STATE_BRIDGE_TO_WKND
-                            permittedBlockType = SleepBlockType.BRIDGE_2_CYCLES
+                            scheduledState = ProtocolStateId.STATE_BRIDGE_TO_WKND
+                            scheduledBlockType = SleepBlockType.BRIDGE_2_CYCLES
                         }
                     }
                 }
@@ -147,51 +156,76 @@ class CircadianStateMachine(
                     when {
                         // Sunday Early AM Weekend Core (00:00 - 02:30 window) -> STATE_WKND_CORE
                         isInsideTimeWindow(time, config.wkndCoreLaunchStart, config.wkndCoreLaunchEnd) -> {
-                            activeState = ProtocolStateId.STATE_WKND_CORE
-                            permittedBlockType = SleepBlockType.CORE_3_CYCLES
+                            scheduledState = ProtocolStateId.STATE_WKND_CORE
+                            scheduledBlockType = SleepBlockType.CORE_3_CYCLES
                         }
                     }
                 }
             }
         }
 
+        val isInScheduledLaunchWindow = scheduledState != null && scheduledBlockType != null
+
+        // If outside scheduled launch window and sleep was NOT completed for current cycle,
+        // evaluate Backward-Calculated Sleep Ceiling for UNFULFILLED_ANCHOR_DELAYED
+        val delayedEvaluation = if (!isInScheduledLaunchWindow && !isAnchorCompleted) {
+            evaluateDelayedAnchorCeiling(now, nextAnchor)
+        } else {
+            null
+        }
+
+        val isInActiveOrDelayedSleepWindow = isInScheduledLaunchWindow || delayedEvaluation != null
+        val effectivePermittedBlock = scheduledBlockType ?: delayedEvaluation?.recommendedBlock
+        val effectiveNextAnchorTime = delayedEvaluation?.adjustedNextAnchorTime ?: nextAnchor.first
+        val isAnchorPushedBack = delayedEvaluation?.isAnchorPushedBack ?: false
+
         // Check if inside Tue–Sat mid-shift nap window (01:00 - 02:00)
         val isShiftNapWindow = isWithinShiftWindow(now) &&
             isInsideTimeWindow(time, config.workNapLaunchStart, config.workNapLaunchEnd)
 
-        val isInActiveCoreOrBridgeWindow = activeState != null && permittedBlockType != null
         val governingState = when {
-            isInActiveCoreOrBridgeWindow -> activeState!!
+            isInScheduledLaunchWindow -> scheduledState!!
+            delayedEvaluation != null -> ProtocolStateId.UNFULFILLED_ANCHOR_DELAYED
             isShiftNapWindow -> ProtocolStateId.STATE_WORK_NAP
             else -> ProtocolStateId.STATE_WAKE_LOCKOUT
         }
 
-        val permittedAction = if (isInActiveCoreOrBridgeWindow) {
-            val block = permittedBlockType!!
-            val dur = config.durationMinutesFor(block)
+        val leewayNote = buildWeekdayCommuteLeewayNote(now, effectivePermittedBlock)
+
+        val permittedAction = if (isInActiveOrDelayedSleepWindow && effectivePermittedBlock != null) {
+            val dur = config.durationMinutesFor(effectivePermittedBlock)
             val wake = now.plusMinutes(dur.toLong())
             val wakeStr = DeviationRecoveryCalculator.formatTime(wake)
-            val badge = when (block) {
-                SleepBlockType.CORE_3_CYCLES -> "PRIMARY ANCHOR (3 CYCLES)"
-                SleepBlockType.BRIDGE_2_CYCLES -> "PRIMARY BRIDGE (2 CYCLES)"
-                SleepBlockType.FLUSH_NAP_20M -> "MID-SHIFT FLUSH (20M)"
+            val badge = if (delayedEvaluation != null) {
+                delayedEvaluation.badgeLabel
+            } else {
+                when (effectivePermittedBlock) {
+                    SleepBlockType.CORE_3_CYCLES -> "PRIMARY ANCHOR (3 CYCLES)"
+                    SleepBlockType.BRIDGE_2_CYCLES -> "PRIMARY BRIDGE (2 CYCLES)"
+                    SleepBlockType.RECOVERY_1_CYCLE -> "RESCUE BLOCK (1 CYCLE)"
+                    SleepBlockType.FLUSH_NAP_20M -> "MID-SHIFT FLUSH (20M)"
+                }
             }
-            val reason = when (governingState) {
-                ProtocolStateId.STATE_WORK_CORE ->
-                    "Optimal 4h 44m core block (3 × 90m + 14m latency). Wakes at $wakeStr before 21:00 shift."
-                ProtocolStateId.STATE_BRIDGE_TO_WKND ->
-                    "Capped 3h 14m bridge wakes at $wakeStr, preserving sleep pressure for 01:00 Saturday night."
-                ProtocolStateId.STATE_WKND_CORE ->
-                    "Full 4h 44m recovery block anchored at 01:00 -> wakes at $wakeStr."
-                ProtocolStateId.STATE_BRIDGE_TO_WORK ->
-                    "Mandatory 3h 14m bridge (2 × 90m + 14m latency). Waking at $wakeStr guarantees ~8.25h wakefulness before Monday 12:30 Work Core."
-                else -> "Scheduled ultradian anchor trigger."
+            val reason = if (delayedEvaluation != null) {
+                delayedEvaluation.reasonText
+            } else {
+                when (governingState) {
+                    ProtocolStateId.STATE_WORK_CORE ->
+                        "Full 4h 44m sleep (3 × 90m cycles + 14m to fall asleep). Wakes at $wakeStr before your 21:00 shift."
+                    ProtocolStateId.STATE_BRIDGE_TO_WKND ->
+                        "Shorter 3h 14m morning sleep wakes at $wakeStr, leaving you tired enough to sleep at 01:00 tonight."
+                    ProtocolStateId.STATE_WKND_CORE ->
+                        "Full 4h 44m weekend night sleep anchored at 01:00 -> wakes at $wakeStr."
+                    ProtocolStateId.STATE_BRIDGE_TO_WORK ->
+                        "Short 3h 14m sleep (2 cycles + 14m). Waking at $wakeStr gives ~8.25h awake so you can sleep at 12:30 PM Monday."
+                    else -> "Scheduled sleep window open."
+                }
             }
             SleepActionOption(
-                blockType = permittedBlockType,
+                blockType = effectivePermittedBlock,
                 durationMinutes = dur,
                 calculatedWakeTime = wake,
-                calculatedTriggerMillis = config.calculateTargetTriggerMillis(nowMillis, permittedBlockType),
+                calculatedTriggerMillis = config.calculateTargetTriggerMillis(nowMillis, effectivePermittedBlock),
                 permission = GuardrailPermission.PRIMARY_RECOMMENDED,
                 guardrailBadge = badge,
                 guardrailReason = reason
@@ -200,51 +234,321 @@ class CircadianStateMachine(
             null
         }
 
-        val countdown = Duration.between(now, nextAnchor.first).let {
+        val flexibleCycleOptions = if (!isAnchorCompleted && !isWithinShiftWindow(now)) {
+            buildFlexibleCycleOptions(now, effectivePermittedBlock, effectiveNextAnchorTime)
+        } else {
+            emptyList()
+        }
+
+        val countdown = Duration.between(now, effectiveNextAnchorTime).let {
             if (it.isNegative) Duration.ZERO else it
         }
 
         val countdownStr = DeviationRecoveryCalculator.formatDuration(countdown)
-        val nextTimeStr = DeviationRecoveryCalculator.formatTime(nextAnchor.first)
-        val lockoutHeadline = "WAKE LOCKOUT ACTIVE — Building Homeostatic Pressure"
-        val lockoutSubtext = "Next Anchor: ${nextAnchor.second.codeName} at $nextTimeStr in $countdownStr"
+        val nextTimeStr = DeviationRecoveryCalculator.formatTime(effectiveNextAnchorTime)
+        val lockoutHeadline = "WAKE LOCKOUT ACTIVE — Stay Awake Until $nextTimeStr"
+        val lockoutSubtext = "Next Anchor: ${nextAnchor.second.codeName} (${nextAnchor.second.title}) at $nextTimeStr in $countdownStr"
 
         return PrimaryAnchorWindowStatus(
-            isInActiveLaunchWindow = isInActiveCoreOrBridgeWindow,
+            isInActiveLaunchWindow = isInActiveOrDelayedSleepWindow,
             activeStateId = governingState,
-            permittedBlockType = permittedBlockType,
+            permittedBlockType = effectivePermittedBlock,
             permittedActionOption = permittedAction,
             nextScheduledAnchorState = nextAnchor.second,
-            nextScheduledAnchorTime = nextAnchor.first,
+            nextScheduledAnchorTime = effectiveNextAnchorTime,
             countdownToNextAnchor = countdown,
             wakeLockoutHeadline = lockoutHeadline,
-            wakeLockoutSubtext = lockoutSubtext
+            wakeLockoutSubtext = lockoutSubtext,
+            isUnfulfilledAnchorDelayed = delayedEvaluation != null,
+            isAnchorCompletedForCurrentCycle = isAnchorCompleted,
+            nominalNextAnchorTime = nextAnchor.first,
+            isAnchorPushedBack = isAnchorPushedBack,
+            delayedRecoveryHeadline = delayedEvaluation?.badgeLabel,
+            leewayAdvisoryText = leewayNote,
+            availableCycleOptions = flexibleCycleOptions
         )
     }
 
+    private data class DelayedAnchorEvaluation(
+        val recommendedBlock: SleepBlockType,
+        val adjustedNextAnchorTime: ZonedDateTime,
+        val isAnchorPushedBack: Boolean,
+        val badgeLabel: String,
+        val reasonText: String
+    )
+
     /**
-     * Module 3 & Section 4.C: Dynamic 20-Minute Nap Lockout Calculator.
-     * Evaluates Rule 1 (Pre-Anchor 4.5h Cutoff), Rule 2 (Post-Wake 90m Cooldown),
-     * Rule 3 (Weekend Evening Danger Zone 18:00–01:00), and Rule 4 (Permitted Nap Windows).
+     * Backward-Calculated Sleep Ceiling for UNFULFILLED_ANCHOR_DELAYED:
+     * Steps down 3 Cycles (4h 44m) -> 2 Cycles (3h 14m) -> 1 Cycle (1h 44m)
+     * while preserving 6h–7h homeostatic wake buffer before NextAnchorStart
+     * (allowing up to +1h anchor pushback from 01:00 to 02:00 when wake time crosses the standard threshold).
      */
+    private fun evaluateDelayedAnchorCeiling(
+        now: ZonedDateTime,
+        nextAnchor: Pair<ZonedDateTime, ProtocolStateId>
+    ): DelayedAnchorEvaluation? {
+        if (isWithinShiftWindow(now)) return null
+
+        val day = now.dayOfWeek
+        val time = now.toLocalTime()
+        val zone = now.zone
+
+        // Determine if an anchor window for the current day/period has already opened/passed
+        // or if the user wants early/late daytime sleep on a workday/weekend
+        val isWeekendOrSundayDelayed = (day == DayOfWeek.SATURDAY && !time.isBefore(config.satBridgeLaunchEnd)) ||
+            (day == DayOfWeek.SUNDAY && !time.isBefore(config.wkndCoreLaunchEnd))
+
+        val isWorkdayAfternoonDelayed = day in listOf(
+            DayOfWeek.MONDAY,
+            DayOfWeek.TUESDAY,
+            DayOfWeek.WEDNESDAY,
+            DayOfWeek.THURSDAY,
+            DayOfWeek.FRIDAY
+        ) && !time.isBefore(config.workCoreLaunchEnd) && time.isBefore(config.shiftStart)
+
+        if (!isWeekendOrSundayDelayed && !isWorkdayAfternoonDelayed) {
+            return null
+        }
+
+        // Case 1: Workday Late Afternoon Arrival (Mon–Fri after 14:00 before 21:00 shift)
+        if (isWorkdayAfternoonDelayed) {
+            val shiftStartDt = now.toLocalDate().atTime(config.shiftStart).atZone(zone)
+            val candidates = listOf(
+                SleepBlockType.CORE_3_CYCLES to 90L,   // Prefer >= 90m prep leeway before 21:00 shift
+                SleepBlockType.BRIDGE_2_CYCLES to 60L, // Prefer >= 60m prep leeway before 21:00 shift
+                SleepBlockType.RECOVERY_1_CYCLE to 30L // Rescue 1-cycle if >= 30m before 21:00 shift
+            )
+            for ((block, minLeewayMin) in candidates) {
+                val durMin = config.durationMinutesFor(block)
+                val wakeTime = now.plusMinutes(durMin.toLong())
+                val leewayToShift = Duration.between(wakeTime, shiftStartDt).toMinutes()
+                if (leewayToShift >= minLeewayMin) {
+                    val wakeStr = DeviationRecoveryCalculator.formatTime(wakeTime)
+                    val durStr = DeviationRecoveryCalculator.formatDuration(Duration.ofMinutes(durMin.toLong()))
+                    val cyclesLabel = if (block.cyclesCount == 1) "1 CYCLE" else "${block.cyclesCount} CYCLES"
+                    val badge = "DELAYED RECOVERY: $cyclesLabel ($durStr)"
+                    val leewayStr = DeviationRecoveryCalculator.formatDuration(Duration.ofMinutes(leewayToShift))
+                    val reason = "Late arrival adjustment: $durStr sleep wakes at $wakeStr, leaving $leewayStr to get ready before your 21:00 shift."
+                    return DelayedAnchorEvaluation(
+                        recommendedBlock = block,
+                        adjustedNextAnchorTime = nextAnchor.first,
+                        isAnchorPushedBack = false,
+                        badgeLabel = badge,
+                        reasonText = reason
+                    )
+                }
+            }
+            return null
+        }
+
+        // Case 2: Weekend / Overnight Anchor Delayed (e.g., Saturday 09:30+ -> Sunday 01:00 STATE_WKND_CORE)
+        val nominalAnchorTime = nextAnchor.first
+        val maxPushedAnchorTime = nominalAnchorTime.plusMinutes(config.maxAnchorPushbackMinutes.toLong())
+
+        val candidates = listOf(
+            SleepBlockType.CORE_3_CYCLES,
+            SleepBlockType.BRIDGE_2_CYCLES,
+            SleepBlockType.RECOVERY_1_CYCLE
+        )
+
+        for (block in candidates) {
+            val durMin = config.durationMinutesFor(block)
+            val wakeTime = now.plusMinutes(durMin.toLong())
+            val bufferToNominalMin = Duration.between(wakeTime, nominalAnchorTime).toMinutes()
+            val bufferToPushedMin = Duration.between(wakeTime, maxPushedAnchorTime).toMinutes()
+
+            // For 3 cycles on Saturday daytime, require >= 8h (480m) before nominal 01:00 so afternoon arrivals step down to 2 cycles
+            val requiredNominalForNoPushback = if (block == SleepBlockType.CORE_3_CYCLES && day == DayOfWeek.SATURDAY) {
+                480L // 8h 00m before 01:00 (waking by 17:00)
+            } else {
+                config.standardWakeBufferMinutes.toLong() // 7h 00m (420m)
+            }
+
+            val fitsWithoutPushback = bufferToNominalMin >= requiredNominalForNoPushback
+            val fitsWithPushback = block != SleepBlockType.CORE_3_CYCLES &&
+                bufferToNominalMin >= config.minimumWakeBufferMinutes.toLong() &&
+                bufferToPushedMin >= config.standardWakeBufferMinutes.toLong()
+
+            if (fitsWithoutPushback || fitsWithPushback) {
+                val pushbackActive = !fitsWithoutPushback && fitsWithPushback
+                val effectiveAnchor = if (pushbackActive) maxPushedAnchorTime else nominalAnchorTime
+                val effectiveBuffer = Duration.between(wakeTime, effectiveAnchor)
+
+                val wakeStr = DeviationRecoveryCalculator.formatTime(wakeTime)
+                val durStr = DeviationRecoveryCalculator.formatDuration(Duration.ofMinutes(durMin.toLong()))
+                val nominalStr = DeviationRecoveryCalculator.formatTime(nominalAnchorTime)
+                val effectiveAnchorStr = DeviationRecoveryCalculator.formatTime(effectiveAnchor)
+                val bufferStr = DeviationRecoveryCalculator.formatDuration(effectiveBuffer)
+                val cyclesLabel = if (block.cyclesCount == 1) "1 CYCLE" else "${block.cyclesCount} CYCLES"
+                val badge = "DELAYED RECOVERY: $cyclesLabel ($durStr)"
+
+                val reason = if (pushbackActive) {
+                    "Zero sleep logged yet. $durStr sleep wakes at $wakeStr; shifts tonight's bedtime from $nominalStr -> $effectiveAnchorStr to preserve $bufferStr of awake time."
+                } else {
+                    "Zero sleep logged yet. $durStr recovery sleep wakes at $wakeStr, leaving $bufferStr of awake time before tonight's $effectiveAnchorStr sleep."
+                }
+
+                return DelayedAnchorEvaluation(
+                    recommendedBlock = block,
+                    adjustedNextAnchorTime = effectiveAnchor,
+                    isAnchorPushedBack = pushbackActive,
+                    badgeLabel = badge,
+                    reasonText = reason
+                )
+            }
+        }
+
+        return null
+    }
+
     /**
-     * Module 3 & Section 4.C: Dynamic 20-Minute Nap Lockout Calculator convenience overload.
+     * Checks whether the current cycle's core or bridge anchor was explicitly completed.
+     */
+    fun isAnchorCompletedForCurrentCycle(
+        now: ZonedDateTime,
+        completedAnchorAt: ZonedDateTime?
+    ): Boolean {
+        if (completedAnchorAt == null || completedAnchorAt.isAfter(now)) return false
+        val minutesSinceCompletion = Duration.between(completedAnchorAt, now).toMinutes()
+        if (minutesSinceCompletion > 18 * 60) return false
+
+        val cycleWindowStart = resolveCurrentCycleWindowStart(now)
+        return !completedAnchorAt.isBefore(cycleWindowStart)
+    }
+
+    private fun resolveCurrentCycleWindowStart(now: ZonedDateTime): ZonedDateTime {
+        val day = now.dayOfWeek
+        val time = now.toLocalTime()
+        val zone = now.zone
+
+        return when (day) {
+            DayOfWeek.SATURDAY -> {
+                if (!time.isBefore(config.satBridgeLaunchStart)) {
+                    now.toLocalDate().atTime(config.satBridgeLaunchStart).atZone(zone)
+                } else {
+                    now.toLocalDate().minusDays(1).atTime(config.workCoreLaunchStart).atZone(zone)
+                }
+            }
+            DayOfWeek.SUNDAY -> {
+                now.toLocalDate().atTime(config.wkndCoreLaunchStart).atZone(zone)
+            }
+            DayOfWeek.MONDAY -> {
+                if (!time.isBefore(config.workCoreLaunchStart)) {
+                    now.toLocalDate().atTime(config.workCoreLaunchStart).atZone(zone)
+                } else {
+                    now.toLocalDate().atTime(config.monBridgeLaunchStart).atZone(zone)
+                }
+            }
+            DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY -> {
+                if (!time.isBefore(config.workCoreLaunchStart)) {
+                    now.toLocalDate().atTime(config.workCoreLaunchStart).atZone(zone)
+                } else {
+                    now.toLocalDate().minusDays(1).atTime(config.workCoreLaunchStart).atZone(zone)
+                }
+            }
+        }
+    }
+
+    private fun buildFlexibleCycleOptions(
+        now: ZonedDateTime,
+        recommendedBlock: SleepBlockType?,
+        nextAnchorTime: ZonedDateTime
+    ): List<SleepActionOption> {
+        val nowMillis = now.toInstant().toEpochMilli()
+        val fullCycleBlocks = listOf(
+            SleepBlockType.CORE_3_CYCLES,
+            SleepBlockType.BRIDGE_2_CYCLES,
+            SleepBlockType.RECOVERY_1_CYCLE
+        )
+        return fullCycleBlocks.map { block ->
+            val dur = config.durationMinutesFor(block)
+            val wake = now.plusMinutes(dur.toLong())
+            val wakeStr = DeviationRecoveryCalculator.formatTime(wake)
+            val durStr = DeviationRecoveryCalculator.formatDuration(Duration.ofMinutes(dur.toLong()))
+            val isRecommended = block == recommendedBlock
+            SleepActionOption(
+                blockType = block,
+                durationMinutes = dur,
+                calculatedWakeTime = wake,
+                calculatedTriggerMillis = config.calculateTargetTriggerMillis(nowMillis, block),
+                permission = if (isRecommended) GuardrailPermission.PRIMARY_RECOMMENDED else GuardrailPermission.ALLOWED_SECONDARY,
+                guardrailBadge = if (isRecommended) "RECOMMENDED ($durStr)" else "${block.cyclesCount} CYCLE OPTION ($durStr)",
+                guardrailReason = "Wakes at $wakeStr (${DeviationRecoveryCalculator.formatDuration(Duration.between(wake, nextAnchorTime).let { if (it.isNegative) Duration.ZERO else it })} before ${DeviationRecoveryCalculator.formatTime(nextAnchorTime)})"
+            )
+        }
+    }
+
+    /**
+     * Non-rigid informational note on weekdays showing how much leeway a wake-up leaves
+     * before the 18:00 (6:00 PM) travel/departure reference and 21:00 shift start.
+     */
+    private fun buildWeekdayCommuteLeewayNote(
+        now: ZonedDateTime,
+        blockType: SleepBlockType?
+    ): String? {
+        if (blockType == null || blockType == SleepBlockType.FLUSH_NAP_20M) return null
+        val day = now.dayOfWeek
+        if (day !in listOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)) {
+            return null
+        }
+        val time = now.toLocalTime()
+        if (time.isBefore(LocalTime.of(8, 0)) || !time.isBefore(config.shiftStart)) return null
+
+        val durMin = config.durationMinutesFor(blockType)
+        val wake = now.plusMinutes(durMin.toLong())
+        val wakeStr = DeviationRecoveryCalculator.formatTime(wake)
+        val commuteTarget = now.toLocalDate().atTime(config.weekdayCommuteReferenceTime).atZone(now.zone)
+        val shiftTarget = now.toLocalDate().atTime(config.shiftStart).atZone(now.zone)
+
+        val before1800Min = Duration.between(wake, commuteTarget).toMinutes()
+        val before2100Min = Duration.between(wake, shiftTarget).toMinutes().coerceAtLeast(0)
+        val shiftLeewayStr = DeviationRecoveryCalculator.formatDuration(Duration.ofMinutes(before2100Min))
+
+        return if (before1800Min > 0) {
+            val commuteLeewayStr = DeviationRecoveryCalculator.formatDuration(Duration.ofMinutes(before1800Min))
+            "Weekday Logistics Note: Waking at $wakeStr gives you $commuteLeewayStr before 18:00 (6:00 PM) departure ($shiftLeewayStr before 21:00 shift)."
+        } else {
+            "Weekday Logistics Note: Wakes at $wakeStr (after 18:00; leaves $shiftLeewayStr before 21:00 shift). Select 2 Cycles (3h 14m) if you need to leave before 18:00."
+        }
+    }
+
+    /**
+     * Module 3 & Section 4.C: Sliding 20-Minute Nap Lockout Calculator (v2.2).
+     * Decouples post-wake cooldown from wall-clock assumptions and keeps the 20m nap
+     * unlocked throughout the shift/wake period unless:
+     * 1. Already completed in current period,
+     * 2. Inside event-verified 90m post-wake cooldown,
+     * 3. Weekend Evening Danger Zone (18:00–01:00) / confirmed weekend lockout / deviation override, or
+     * 4. CurrentTime + 20m breaches the 4-hour proximity cutoff before NextCoreAnchorStart.
      */
     fun evaluateNapLockout(
         now: ZonedDateTime,
         lastActualWake: ZonedDateTime? = null,
-        activeDeviation: DeviationRecoveryPlan? = null
+        activeDeviation: DeviationRecoveryPlan? = null,
+        completedNapAt: ZonedDateTime? = null,
+        completedAnchorAt: ZonedDateTime? = null
     ): NapLockoutEvaluation {
-        val nextAnchor = resolveNextCoreOrBridgeAnchor(now)
-        val weekendLockout = evaluateWeekendLockout(now, nextAnchor.second, activeDeviation)
+        val nominalAnchor = resolveNextCoreOrBridgeAnchor(now)
+        val effectiveCompletedAnchor = completedAnchorAt ?: lastActualWake
+        val primaryStatus = evaluatePrimaryAnchorWindow(now, nominalAnchor, effectiveCompletedAnchor)
+        val effectiveAnchor = primaryStatus.nextScheduledAnchorTime to primaryStatus.nextScheduledAnchorState
         val isInsideShift = isWithinShiftWindow(now)
+        val weekendLockout = evaluateWeekendLockout(
+            now = now,
+            nextAnchorState = effectiveAnchor.second,
+            activeDeviation = activeDeviation,
+            isAnchorCompletedForCurrentCycle = primaryStatus.isAnchorCompletedForCurrentCycle,
+            effectiveNextAnchorTime = effectiveAnchor.first
+        )
         return evaluateNapLockout(
             now = now,
-            nextAnchor = nextAnchor,
-            lastActualWake = lastActualWake,
+            nextAnchor = effectiveAnchor,
+            lastActualWake = lastActualWake ?: completedAnchorAt ?: completedNapAt,
             activeDeviation = activeDeviation,
             weekendLockout = weekendLockout,
-            isInsideShift = isInsideShift
+            isInsideShift = isInsideShift,
+            completedNapAt = completedNapAt,
+            completedAnchorAt = effectiveCompletedAnchor
         )
     }
 
@@ -254,20 +558,22 @@ class CircadianStateMachine(
         lastActualWake: ZonedDateTime?,
         activeDeviation: DeviationRecoveryPlan?,
         weekendLockout: WeekendLockoutStatus,
-        isInsideShift: Boolean
+        isInsideShift: Boolean,
+        completedNapAt: ZonedDateTime? = null,
+        completedAnchorAt: ZonedDateTime? = null
     ): NapLockoutEvaluation {
         val time = now.toLocalTime()
         val day = now.dayOfWeek
-        val scheduledWake = resolveMostRecentScheduledWake(now)
-        val effectiveLastWake = when {
-            lastActualWake != null && lastActualWake.isAfter(scheduledWake) -> lastActualWake
-            else -> scheduledWake
-        }
 
-        val timeSinceLastWake = if (now.isAfter(effectiveLastWake)) {
-            Duration.between(effectiveLastWake, now)
+        // Strictly event-driven wake timestamp: NEVER assume sleep occurred from the wall clock
+        val confirmedLastWake = listOfNotNull(lastActualWake, completedAnchorAt, completedNapAt)
+            .filter { !it.isAfter(now) }
+            .maxOrNull()
+
+        val timeSinceLastWake: Duration? = if (confirmedLastWake != null) {
+            Duration.between(confirmedLastWake, now)
         } else {
-            Duration.ZERO
+            null
         }
 
         val timeUntilNextAnchor = if (nextAnchor.first.isAfter(now)) {
@@ -280,10 +586,16 @@ class CircadianStateMachine(
         val wakeStr = DeviationRecoveryCalculator.formatTime(wakeTime)
         val nextAnchorTimeStr = DeviationRecoveryCalculator.formatTime(nextAnchor.first)
 
-        // 1. Rule 2: Post-Wake 90m Cooldown / Anti-Backslide (Highest Priority immediately after wake-up)
-        val isInsidePostWakeCooldown = timeSinceLastWake.toMinutes() in 0L..<config.postWakeCooldownMinutes.toLong()
+        // Check if a 20m nap was already completed in the current wake/shift period
+        val napCompletedInCurrentPeriod = completedNapAt != null &&
+            !completedNapAt.isAfter(now) &&
+            Duration.between(completedNapAt, now).toHours() < 12 &&
+            (completedAnchorAt == null || !completedNapAt.isBefore(completedAnchorAt))
+
+        // 1. Rule: Post-Wake 90m Cooldown / Anti-Backslide (Event-Verified Only!)
+        val isInsidePostWakeCooldown = timeSinceLastWake != null &&
+            timeSinceLastWake.toMinutes() in 0L..<config.postWakeCooldownMinutes.toLong()
         if (isInsidePostWakeCooldown) {
-            val cooldownRemaining = Duration.ofMinutes(config.postWakeCooldownMinutes.toLong()) - timeSinceLastWake
             return NapLockoutEvaluation(
                 isHardLocked = true,
                 ruleTriggered = NapLockoutRule.POST_WAKE_90M_COOLDOWN,
@@ -292,11 +604,27 @@ class CircadianStateMachine(
                 timeSinceLastWake = timeSinceLastWake,
                 timeUntilNextAnchor = timeUntilNextAnchor,
                 nextAnchorTargetTime = nextAnchor.first,
-                calculatedWakeTime = wakeTime
+                calculatedWakeTime = wakeTime,
+                isNapCompletedInCurrentPeriod = napCompletedInCurrentPeriod
             )
         }
 
-        // 2. Rule 3: Weekend Evening Danger Zone (18:00 - 01:00)
+        // 2. Rule: Nap Already Completed in Current Shift / Wake Period
+        if (napCompletedInCurrentPeriod) {
+            return NapLockoutEvaluation(
+                isHardLocked = true,
+                ruleTriggered = NapLockoutRule.NAP_ALREADY_COMPLETED_IN_PERIOD,
+                statusHeadline = "LOCKED (Hard-Lock Rule) • NAP ALREADY TAKEN",
+                lockoutReason = "LOCKED (Hard-Lock Rule): You already completed your 20m power nap for this period at ${DeviationRecoveryCalculator.formatTime(completedNapAt!!)}.",
+                timeSinceLastWake = timeSinceLastWake,
+                timeUntilNextAnchor = timeUntilNextAnchor,
+                nextAnchorTargetTime = nextAnchor.first,
+                calculatedWakeTime = wakeTime,
+                isNapCompletedInCurrentPeriod = true
+            )
+        }
+
+        // 3. Rule: Weekend Evening Danger Zone (18:00 - 01:00)
         val isWeekendEveningDangerZone = when (day) {
             DayOfWeek.SATURDAY -> time.hour >= 18
             DayOfWeek.SUNDAY -> time.hour < 1 || time.hour >= 18
@@ -312,11 +640,12 @@ class CircadianStateMachine(
                 timeSinceLastWake = timeSinceLastWake,
                 timeUntilNextAnchor = timeUntilNextAnchor,
                 nextAnchorTargetTime = nextAnchor.first,
-                calculatedWakeTime = wakeTime
+                calculatedWakeTime = wakeTime,
+                isNapCompletedInCurrentPeriod = false
             )
         }
 
-        // 3. Deviation Zero-Nap Lockout Override
+        // 4. Rule: Deviation Zero-Nap Lockout Override
         if (activeDeviation != null && activeDeviation.enforceZeroNapLockout && now.isBefore(activeDeviation.nextAnchorTimestamp)) {
             val untilOverride = Duration.between(now, activeDeviation.nextAnchorTimestamp)
             return NapLockoutEvaluation(
@@ -327,84 +656,73 @@ class CircadianStateMachine(
                 timeSinceLastWake = timeSinceLastWake,
                 timeUntilNextAnchor = timeUntilNextAnchor,
                 nextAnchorTargetTime = nextAnchor.first,
-                calculatedWakeTime = wakeTime
+                calculatedWakeTime = wakeTime,
+                isNapCompletedInCurrentPeriod = false
             )
         }
 
-        // 4. Weekend Zero-Nap Stretch (Saturday daytime after Bridge #1 or Sunday daytime after Core)
+        // 5. Rule: Weekend Zero-Nap Stretch (Only active AFTER weekend morning sleep is actually completed!)
         if (weekendLockout.isLockoutActive) {
             return NapLockoutEvaluation(
                 isHardLocked = true,
                 ruleTriggered = NapLockoutRule.OUTSIDE_PERMITTED_NAP_WINDOW,
                 statusHeadline = "WEEKEND ZERO-NAP PROTOCOL",
-                lockoutReason = "LOCKED: Zero naps permitted all day weekend to protect residual sleep pressure for 01:00 overnight anchor.",
+                lockoutReason = "LOCKED: Zero naps permitted after completing weekend sleep to protect sleep pressure for tonight's $nextAnchorTimeStr bedtime.",
                 timeSinceLastWake = timeSinceLastWake,
                 timeUntilNextAnchor = timeUntilNextAnchor,
                 nextAnchorTargetTime = nextAnchor.first,
-                calculatedWakeTime = wakeTime
+                calculatedWakeTime = wakeTime,
+                isNapCompletedInCurrentPeriod = false
             )
         }
 
-        // 5. Rule 1: Pre-Anchor 4.5h Cutoff (< 270 minutes before next anchor)
-        val isInsidePreAnchorCutoff = timeUntilNextAnchor.toMinutes() < config.preAnchorNapCutoffMinutes.toLong()
-        if (isInsidePreAnchorCutoff) {
+        // 6. Rule: 4-Hour Proximity Cutoff (CurrentTime + 20m < NextCoreAnchorStart - NAP_PROXIMITY_CUTOFF)
+        val postNapTimeUntilAnchor = Duration.between(wakeTime, nextAnchor.first)
+        val breachesProximityCutoff = postNapTimeUntilAnchor.toMinutes() < config.napProximityCutoffMinutes.toLong()
+        if (breachesProximityCutoff) {
             return NapLockoutEvaluation(
                 isHardLocked = true,
                 ruleTriggered = NapLockoutRule.PRE_ANCHOR_4_5H_CUTOFF,
-                statusHeadline = "PRE-ANCHOR 4.5H CUTOFF ACTIVE",
-                lockoutReason = "LOCKED: < 4.5h until $nextAnchorTimeStr anchor. Napping now will bleed off required sleep pressure.",
+                statusHeadline = "PRE-ANCHOR CUTOFF ACTIVE (< 4H POST-NAP)",
+                lockoutReason = "LOCKED: < 4.5h until $nextAnchorTimeStr anchor (< 4h after 20m nap). Napping now will bleed off required sleep pressure.",
                 timeSinceLastWake = timeSinceLastWake,
                 timeUntilNextAnchor = timeUntilNextAnchor,
                 nextAnchorTargetTime = nextAnchor.first,
-                calculatedWakeTime = wakeTime
+                calculatedWakeTime = wakeTime,
+                isNapCompletedInCurrentPeriod = false
             )
         }
 
-        // 6. Rule 4: Permitted Nap Windows
-        val isMidShiftWindow = isInsideShift && isInsideTimeWindow(time, config.workNapLaunchStart, config.workNapLaunchEnd)
-        if (isMidShiftWindow) {
+        // 7. Sliding Eligibility Window: Unlocked throughout shift and eligible wake period!
+        if (isInsideShift) {
             return NapLockoutEvaluation(
                 isHardLocked = false,
                 ruleTriggered = NapLockoutRule.NONE_PERMITTED,
-                statusHeadline = "MID-SHIFT ADENOSINE FLUSH (20M)",
-                lockoutReason = "UNLOCKED: Clears adenosine before 03:00 circadian nadir. Wakes at $wakeStr with mandatory 5m anti-backslide check.",
+                statusHeadline = "MID-SHIFT 20-MIN POWER NAP • AVAILABLE",
+                lockoutReason = "Available throughout your shift break. Wakes at $wakeStr (+20m) with a 5m check-in so you don't oversleep.",
                 timeSinceLastWake = timeSinceLastWake,
                 timeUntilNextAnchor = timeUntilNextAnchor,
                 nextAnchorTargetTime = nextAnchor.first,
-                calculatedWakeTime = wakeTime
-            )
-        }
-
-        val isPermittedDaytimeWakeStretch = timeSinceLastWake.toMinutes() >= config.postWakeCooldownMinutes.toLong() &&
-            timeUntilNextAnchor.toMinutes() >= config.preAnchorNapCutoffMinutes.toLong()
-
-        if (isPermittedDaytimeWakeStretch) {
-            return NapLockoutEvaluation(
-                isHardLocked = false,
-                ruleTriggered = NapLockoutRule.NONE_PERMITTED,
-                statusHeadline = "DAYTIME ADENOSINE FLUSH (20M)",
-                lockoutReason = "UNLOCKED: Daytime power flush permitted (>90m since wake, >4.5h before $nextAnchorTimeStr anchor). Wakes at $wakeStr.",
-                timeSinceLastWake = timeSinceLastWake,
-                timeUntilNextAnchor = timeUntilNextAnchor,
-                nextAnchorTargetTime = nextAnchor.first,
-                calculatedWakeTime = wakeTime
+                calculatedWakeTime = wakeTime,
+                isNapCompletedInCurrentPeriod = false
             )
         }
 
         return NapLockoutEvaluation(
-            isHardLocked = true,
-            ruleTriggered = NapLockoutRule.OUTSIDE_PERMITTED_NAP_WINDOW,
-            statusHeadline = "NAP LOCKED",
-            lockoutReason = "LOCKED: Outside permitted 20m nap window. Protect homeostatic sleep pressure for scheduled anchors.",
+            isHardLocked = false,
+            ruleTriggered = NapLockoutRule.NONE_PERMITTED,
+            statusHeadline = "DAYTIME 20-MIN POWER NAP • AVAILABLE",
+            lockoutReason = "Available right now (more than 4h before your $nextAnchorTimeStr sleep). Wakes at $wakeStr (+20m).",
             timeSinceLastWake = timeSinceLastWake,
             timeUntilNextAnchor = timeUntilNextAnchor,
             nextAnchorTargetTime = nextAnchor.first,
-            calculatedWakeTime = wakeTime
+            calculatedWakeTime = wakeTime,
+            isNapCompletedInCurrentPeriod = false
         )
     }
 
     /**
-     * Resolves the next Core or Bridge anchor timestamp and state.
+     * Resolves the next nominal Core or Bridge anchor timestamp and state.
      */
     fun resolveNextCoreOrBridgeAnchor(now: ZonedDateTime): Pair<ZonedDateTime, ProtocolStateId> {
         val day = now.dayOfWeek
@@ -453,7 +771,8 @@ class CircadianStateMachine(
     }
 
     /**
-     * Resolves the most recent scheduled wake-up timestamp to anchor Rule 2 (90m Post-Wake Cooldown).
+     * Resolves the most recent scheduled wake-up timestamp (retained for reference/tests,
+     * no longer used to trigger phantom post-wake cooldowns).
      */
     fun resolveMostRecentScheduledWake(now: ZonedDateTime): ZonedDateTime {
         val day = now.dayOfWeek
@@ -491,11 +810,10 @@ class CircadianStateMachine(
 
     /**
      * Maps any day/time of the week to the governing ProtocolStateId.
-     * In v2.0, outside scheduled launch windows, returns STATE_WAKE_LOCKOUT.
      */
-    fun determineState(now: ZonedDateTime): ProtocolStateId {
+    fun determineState(now: ZonedDateTime, completedAnchorAt: ZonedDateTime? = null): ProtocolStateId {
         val nextAnchor = resolveNextCoreOrBridgeAnchor(now)
-        val status = evaluatePrimaryAnchorWindow(now, nextAnchor, null)
+        val status = evaluatePrimaryAnchorWindow(now, nextAnchor, completedAnchorAt)
         return status.activeStateId
     }
 
@@ -525,10 +843,6 @@ class CircadianStateMachine(
         return isEveningShiftStart || isMorningShiftTail
     }
 
-    private fun isInsideNapWindow(time: LocalTime): Boolean {
-        return isInsideTimeWindow(time, config.workNapLaunchStart, config.workNapLaunchEnd)
-    }
-
     private fun isInsideTimeWindow(time: LocalTime, start: LocalTime, end: LocalTime): Boolean {
         return if (end.isAfter(start)) {
             !time.isBefore(start) && time.isBefore(end)
@@ -538,24 +852,31 @@ class CircadianStateMachine(
     }
 
     /**
-     * Module 3: Weekend Anti-Nap / Boredom Lockout Timer.
+     * Module 3: Weekend Anti-Nap / Boredom Lockout Timer (Event-Driven).
+     * Daytime Zero-Nap Lockout on Saturday/Sunday only activates if the morning sleep
+     * block was actually completed (isAnchorCompletedForCurrentCycle == true), or during an
+     * active Deviation Recovery override, or inside the 18:00–01:00 Evening Boredom Danger Zone.
      */
     private fun evaluateWeekendLockout(
         now: ZonedDateTime,
         nextAnchorState: ProtocolStateId,
-        activeDeviation: DeviationRecoveryPlan?
+        activeDeviation: DeviationRecoveryPlan?,
+        isAnchorCompletedForCurrentCycle: Boolean,
+        effectiveNextAnchorTime: ZonedDateTime
     ): WeekendLockoutStatus {
         val day = now.dayOfWeek
         val time = now.toLocalTime()
 
-        val isSatPostBridgeWake = day == DayOfWeek.SATURDAY && !time.isBefore(config.satBridgeEnd)
-        val isSunPostCoreWake = day == DayOfWeek.SUNDAY && !time.isBefore(config.wkndCoreEnd)
+        val isSatPostBridgeConfirmed = day == DayOfWeek.SATURDAY &&
+            !time.isBefore(config.satBridgeLaunchStart) &&
+            isAnchorCompletedForCurrentCycle
+        val isSunPostCoreConfirmed = day == DayOfWeek.SUNDAY &&
+            !time.isBefore(config.wkndCoreLaunchStart) &&
+            isAnchorCompletedForCurrentCycle
         val isDeviationLockoutActive = activeDeviation != null &&
             activeDeviation.enforceZeroNapLockout &&
             now.isAfter(activeDeviation.input.actualWakeTimestamp) &&
             now.isBefore(activeDeviation.nextAnchorTimestamp)
-
-        val isLockoutActive = isSatPostBridgeWake || isSunPostCoreWake || isDeviationLockoutActive
 
         val isInBoredomDangerZone = when (day) {
             DayOfWeek.SATURDAY -> time.hour >= 18
@@ -564,49 +885,45 @@ class CircadianStateMachine(
             else -> false
         }
 
-        val next0100Anchor = when {
+        val isLockoutActive = isSatPostBridgeConfirmed ||
+            isSunPostCoreConfirmed ||
+            isDeviationLockoutActive ||
+            isInBoredomDangerZone
+
+        val nextTargetAnchor = when {
             activeDeviation != null && now.isBefore(activeDeviation.nextAnchorTimestamp) ->
                 activeDeviation.nextAnchorTimestamp
-            day == DayOfWeek.SATURDAY ->
-                now.toLocalDate().plusDays(1).atTime(config.wkndCoreStart).atZone(now.zone)
-            day == DayOfWeek.SUNDAY && time.isBefore(config.wkndCoreStart) ->
-                now.toLocalDate().atTime(config.wkndCoreStart).atZone(now.zone)
-            day == DayOfWeek.SUNDAY ->
-                now.toLocalDate().plusDays(1).atTime(config.monBridgeStart).atZone(now.zone)
-            day == DayOfWeek.MONDAY && time.isBefore(config.monBridgeStart) ->
-                now.toLocalDate().atTime(config.monBridgeStart).atZone(now.zone)
-            else ->
-                now.toLocalDate().atTime(config.workCoreStart).atZone(now.zone).let {
-                    if (it.isAfter(now)) it else it.plusDays(1)
-                }
+            else -> effectiveNextAnchorTime
         }
 
-        val countdown = Duration.between(now, next0100Anchor).let {
+        val countdown = Duration.between(now, nextTargetAnchor).let {
             if (it.isNegative) Duration.ZERO else it
         }
 
+        val targetTimeStr = DeviationRecoveryCalculator.formatTime(nextTargetAnchor)
+
         val headline = when {
             isInBoredomDangerZone ->
-                "DANGER ZONE (18:00–01:00): EVENING BOREDOM NAP LOCKOUT"
+                "Evening Danger Zone (18:00–01:00): Hold Off Until $targetTimeStr"
             isLockoutActive ->
-                "ZERO-NAP LOCKOUT ACTIVE — COUNTDOWN TO 01:00 ANCHOR"
+                "Stay Awake Window — Countdown to $targetTimeStr Bedtime"
             else ->
-                "Work-Week Biphasic Schedule Active"
+                "Schedule Active"
         }
 
         val subtext = when {
             isInBoredomDangerZone ->
-                "High homeostatic pressure makes a boredom nap fatal to your 01:00 anchor (Oct 17 Incident Trap). Hold until 01:00."
+                "Sleeping between 6:00 PM and 1:00 AM on the weekend easily turns into a 10-hour crash. Hold out until $targetTimeStr."
             isLockoutActive ->
-                "Zero naps permitted all day. Protect residual sleep pressure so you can lock into the 01:00 overnight block."
+                "You finished your earlier sleep. Avoid daytime naps so you can fall asleep easily at $targetTimeStr tonight."
             else ->
-                "Standard ultradian cycle triggers enabled for current phase."
+                "Dynamic cycle adjustments enabled for your current schedule."
         }
 
         return WeekendLockoutStatus(
             isLockoutActive = isLockoutActive,
             isInEveningBoredomDangerZone = isInBoredomDangerZone,
-            nextAnchorTimestamp = next0100Anchor,
+            nextAnchorTimestamp = nextTargetAnchor,
             countdownUntilAnchor = countdown,
             headline = headline,
             subtext = subtext
@@ -615,8 +932,8 @@ class CircadianStateMachine(
 
     /**
      * Builds action options list.
-     * During launch windows, the single permitted cycle block is marked PRIMARY_RECOMMENDED.
-     * During STATE_WAKE_LOCKOUT, full cycle blocks are set to LOCKED_ZERO_NAP_PROTOCOL.
+     * Preserves 3 canonical options (CORE_3_CYCLES, BRIDGE_2_CYCLES, FLUSH_NAP_20M) for backward test compatibility,
+     * while PrimaryAnchorWindowStatus.availableCycleOptions provides the full 3c / 2c / 1c selector.
      */
     private fun buildActionOptions(
         now: ZonedDateTime,
@@ -627,7 +944,13 @@ class CircadianStateMachine(
         val nowMillis = now.toInstant().toEpochMilli()
         val list = mutableListOf<SleepActionOption>()
 
-        SleepBlockType.entries.forEach { blockType ->
+        val canonicalTypes = listOf(
+            SleepBlockType.CORE_3_CYCLES,
+            SleepBlockType.BRIDGE_2_CYCLES,
+            SleepBlockType.FLUSH_NAP_20M
+        )
+
+        canonicalTypes.forEach { blockType ->
             val durationMin = config.durationMinutesFor(blockType)
             val triggerMillis = config.calculateTargetTriggerMillis(nowMillis, blockType)
             val wakeTime = now.plusMinutes(durationMin.toLong())
@@ -639,22 +962,22 @@ class CircadianStateMachine(
                         primaryWindowStatus.isInActiveLaunchWindow && primaryWindowStatus.permittedBlockType == SleepBlockType.CORE_3_CYCLES -> {
                             Triple(
                                 GuardrailPermission.PRIMARY_RECOMMENDED,
-                                "PRIMARY ANCHOR (3 CYCLES)",
-                                "Optimal 4h 44m core block (3 × 90m + 14m latency). Wakes at $wakeStr."
+                                primaryWindowStatus.delayedRecoveryHeadline ?: "RECOMMENDED (3 CYCLES • 4h 44m)",
+                                "Full 4h 44m sleep (3 × 90m + 14m latency). Wakes at $wakeStr."
                             )
                         }
-                        primaryWindowStatus.isInActiveLaunchWindow && primaryWindowStatus.permittedBlockType == SleepBlockType.BRIDGE_2_CYCLES -> {
+                        primaryWindowStatus.isInActiveLaunchWindow -> {
                             Triple(
-                                GuardrailPermission.WARN_INSOMNIA_OR_CIRCADIAN_RISK,
-                                "HARD-LOCKED: 2-CYCLE ONLY",
-                                "Only 2-Cycle Bridge is permitted in this phase. 3-Cycle Core is locked out to prevent oversleep and pre-shift insomnia."
+                                GuardrailPermission.ALLOWED_SECONDARY,
+                                "3-CYCLE OPTION (4h 44m)",
+                                "Full 4h 44m sleep waking at $wakeStr. Shorter 2-cycle sleep is recommended for this window."
                             )
                         }
                         else -> {
                             Triple(
                                 GuardrailPermission.LOCKED_ZERO_NAP_PROTOCOL,
-                                "WAKE LOCKOUT ACTIVE",
-                                "Outside scheduled launch window. Building homeostatic sleep pressure until ${DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nextScheduledAnchorTime)}."
+                                "STAY AWAKE WINDOW",
+                                "Next scheduled sleep is at ${DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nextScheduledAnchorTime)}."
                             )
                         }
                     }
@@ -664,22 +987,22 @@ class CircadianStateMachine(
                         primaryWindowStatus.isInActiveLaunchWindow && primaryWindowStatus.permittedBlockType == SleepBlockType.BRIDGE_2_CYCLES -> {
                             Triple(
                                 GuardrailPermission.PRIMARY_RECOMMENDED,
-                                "PRIMARY BRIDGE (2 CYCLES)",
-                                "Mandatory 3h 14m bridge (2 × 90m + 14m latency). Wakes at $wakeStr."
+                                primaryWindowStatus.delayedRecoveryHeadline ?: "RECOMMENDED (2 CYCLES • 3h 14m)",
+                                "Short 3h 14m sleep (2 × 90m + 14m latency). Wakes at $wakeStr."
                             )
                         }
-                        primaryWindowStatus.isInActiveLaunchWindow && primaryWindowStatus.permittedBlockType == SleepBlockType.CORE_3_CYCLES -> {
+                        primaryWindowStatus.isInActiveLaunchWindow -> {
                             Triple(
                                 GuardrailPermission.ALLOWED_SECONDARY,
-                                "COMPRESSED FALLBACK",
-                                "Compressed 2-Cycle Bridge fallback waking at $wakeStr."
+                                "2-CYCLE OPTION (3h 14m)",
+                                "Shorter 3h 14m sleep waking at $wakeStr."
                             )
                         }
                         else -> {
                             Triple(
                                 GuardrailPermission.LOCKED_ZERO_NAP_PROTOCOL,
-                                "WAKE LOCKOUT ACTIVE",
-                                "Outside scheduled launch window. Building homeostatic sleep pressure until ${DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nextScheduledAnchorTime)}."
+                                "STAY AWAKE WINDOW",
+                                "Next scheduled sleep is at ${DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nextScheduledAnchorTime)}."
                             )
                         }
                     }
@@ -688,22 +1011,29 @@ class CircadianStateMachine(
                     if (napEvaluation.isHardLocked) {
                         Triple(
                             GuardrailPermission.LOCKED_ZERO_NAP_PROTOCOL,
-                            "LOCKED (20M NAP)",
+                            "LOCKED (Hard-Lock Rule)",
                             napEvaluation.lockoutReason
                         )
-                    } else if (primaryWindowStatus.activeStateId == ProtocolStateId.STATE_WORK_NAP) {
+                    } else if (primaryWindowStatus.activeStateId == ProtocolStateId.STATE_WORK_NAP || isWithinShiftWindow(now)) {
                         Triple(
                             GuardrailPermission.PRIMARY_RECOMMENDED,
-                            "PRIMARY MID-SHIFT FLUSH (20M)",
+                            "UNLOCKED (20M SHIFT NAP)",
                             napEvaluation.lockoutReason
                         )
                     } else {
                         Triple(
                             GuardrailPermission.ALLOWED_SECONDARY,
-                            "PERMITTED 20M FLUSH",
+                            "UNLOCKED (20M NAP)",
                             napEvaluation.lockoutReason
                         )
                     }
+                }
+                SleepBlockType.RECOVERY_1_CYCLE -> {
+                    Triple(
+                        GuardrailPermission.ALLOWED_SECONDARY,
+                        "1-CYCLE RESCUE (1h 44m)",
+                        "Single 90m cycle + 14m latency waking at $wakeStr."
+                    )
                 }
             }
 
@@ -739,14 +1069,38 @@ class CircadianStateMachine(
         if (activeDeviation != null) {
             list.add(
                 PhysiologicalAdvisory(
-                    title = "Active Deviation Recovery: ${activeDeviation.headline}",
+                    title = "Active Recovery Plan: ${activeDeviation.headline}",
                     detail = activeDeviation.physiologicalAnalysis.firstOrNull() ?: "",
                     severity = AdvisorySeverity.HIGH_ALERT_LOCKOUT
                 )
             )
         }
 
-        // 2. Nap Lockout Advisory if locked
+        // 2. Delayed Anchor Pushback Advisory
+        if (primaryWindowStatus.isUnfulfilledAnchorDelayed && primaryWindowStatus.isAnchorPushedBack) {
+            val nomStr = DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nominalNextAnchorTime)
+            val adjStr = DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nextScheduledAnchorTime)
+            list.add(
+                PhysiologicalAdvisory(
+                    title = "Tonight's Bedtime Shifted: $nomStr -> $adjStr (+1h Buffer)",
+                    detail = "Because you are sleeping later today, tonight's bedtime is automatically pushed back from $nomStr to $adjStr so you still have 6–7+ hours awake to build sleep drive.",
+                    severity = AdvisorySeverity.PHYSIOLOGICAL_TRIGGER
+                )
+            )
+        }
+
+        // 3. Weekday 6:00 PM Commute Logistics Note
+        if (primaryWindowStatus.leewayAdvisoryText != null) {
+            list.add(
+                PhysiologicalAdvisory(
+                    title = "Weekday 6:00 PM Travel / Prep Reference",
+                    detail = primaryWindowStatus.leewayAdvisoryText,
+                    severity = AdvisorySeverity.INFO
+                )
+            )
+        }
+
+        // 4. Nap Lockout Advisory if locked
         if (napEvaluation.isHardLocked) {
             list.add(
                 PhysiologicalAdvisory(
@@ -757,7 +1111,7 @@ class CircadianStateMachine(
             )
         }
 
-        // 3. Sunglasses Commute Rule (06:00 - 09:00 Tue - Sat)
+        // 5. Sunglasses Commute Rule (06:00 - 09:00 Tue - Sat)
         val isPostShiftMorning = day in listOf(
             DayOfWeek.TUESDAY,
             DayOfWeek.WEDNESDAY,
@@ -769,35 +1123,35 @@ class CircadianStateMachine(
         if (isPostShiftMorning) {
             list.add(
                 PhysiologicalAdvisory(
-                    title = "06:00–09:00 Commute Daylight Blunting",
-                    detail = "Wear dark sunglasses on commute home to blunt suprachiasmatic nucleus daylight signaling before 12:30 core sleep.",
+                    title = "Morning Commute (06:00–09:00): Wear Dark Sunglasses",
+                    detail = "Blocking bright morning sunlight on your drive home keeps your brain ready to fall asleep quickly during the day.",
                     severity = AdvisorySeverity.PHYSIOLOGICAL_TRIGGER
                 )
             )
         }
 
-        // 4. Mid-Shift Caffeine & Adenosine Flush Rule
+        // 6. Mid-Shift Caffeine & Nap Rule
         if (isInsideShift) {
             if (time.isAfter(LocalTime.of(20, 59)) || time.isBefore(config.caffeinePermittedTime)) {
                 list.add(
                     PhysiologicalAdvisory(
-                        title = "Caffeine Gate: Delay Until 02:00",
-                        detail = "Do not consume sugar-free caffeine before the 01:15–01:35 Adenosine Flush Nap. Clear adenosine first, then dose at 02:00.",
+                        title = "Wait Until After Your Nap (~02:00) for Caffeine",
+                        detail = "Hold off on energy drinks or coffee until after your 20-minute shift nap so you can fall asleep fast on break.",
                         severity = AdvisorySeverity.PHYSIOLOGICAL_TRIGGER
                     )
                 )
             } else if (!time.isBefore(config.caffeinePermittedTime) && time.isBefore(LocalTime.of(4, 30))) {
                 list.add(
                     PhysiologicalAdvisory(
-                        title = "02:00 Caffeine Window Open | 03:00 Nadir Guard",
-                        detail = "Post-flush sugar-free caffeine permitted now to bridge the 03:00 circadian nadir with <10h time-awake since 17:14.",
+                        title = "Caffeine Window Open (02:00–04:30)",
+                        detail = "Sugar-free caffeine is fine now to power through the 03:00 AM energy dip while still wearing off before daytime sleep.",
                         severity = AdvisorySeverity.INFO
                     )
                 )
             }
         }
 
-        // 5. Monday Pressure Accumulation Stretch (04:14 -> 12:30)
+        // 7. Monday Morning Awake Stretch (04:14 -> 12:30)
         if (day == DayOfWeek.MONDAY && !time.isBefore(config.monBridgeEnd) && time.isBefore(config.workCoreStart)) {
             val untilWorkCore = Duration.between(
                 now,
@@ -805,8 +1159,8 @@ class CircadianStateMachine(
             )
             list.add(
                 PhysiologicalAdvisory(
-                    title = "Monday Homeostatic Pressure Build (04:14–12:30)",
-                    detail = "Remain awake (${DeviationRecoveryCalculator.formatDuration(untilWorkCore)} left until 12:30). Your capped 2-cycle bridge guarantees sufficient pressure for STATE_WORK_CORE.",
+                    title = "Monday Morning Awake Window (Until 12:30 PM)",
+                    detail = "Stay awake (${DeviationRecoveryCalculator.formatDuration(untilWorkCore)} left until 12:30 PM) so you can get a full 4h 44m sleep before Monday night's shift.",
                     severity = AdvisorySeverity.PHYSIOLOGICAL_TRIGGER
                 )
             )
@@ -823,37 +1177,47 @@ class CircadianStateMachine(
         activeDeviation: DeviationRecoveryPlan?
     ): Pair<String, String> {
         if (activeDeviation != null && lockoutStatus.isLockoutActive) {
-            return "DEVIATION RECOVERY ACTIVE" to
-                "Strict Zero-Nap Lockout until ${DeviationRecoveryCalculator.formatDayTime(lockoutStatus.nextAnchorTimestamp)}."
+            return "RECOVERY PLAN ACTIVE" to
+                "Stay awake until ${DeviationRecoveryCalculator.formatDayTime(lockoutStatus.nextAnchorTimestamp)}."
+        }
+
+        if (primaryWindowStatus.isUnfulfilledAnchorDelayed) {
+            val badge = primaryWindowStatus.delayedRecoveryHeadline ?: "DELAYED RECOVERY"
+            val nextTimeStr = DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nextScheduledAnchorTime)
+            return badge to
+                "Late arrival adjustment • Next bedtime target: $nextTimeStr."
         }
 
         if (!primaryWindowStatus.isInActiveLaunchWindow) {
             val countdownStr = DeviationRecoveryCalculator.formatDuration(primaryWindowStatus.countdownToNextAnchor)
             val nextState = primaryWindowStatus.nextScheduledAnchorState
             val nextTimeStr = DeviationRecoveryCalculator.formatTime(primaryWindowStatus.nextScheduledAnchorTime)
-            return "WAKE LOCKOUT ACTIVE" to
-                "Building Homeostatic Pressure • Next Anchor: ${nextState.title} at $nextTimeStr in $countdownStr."
+            return "STAY AWAKE WINDOW" to
+                "Next Sleep: ${nextState.title} at $nextTimeStr in $countdownStr."
         }
 
         return when (primaryWindowStatus.activeStateId) {
             ProtocolStateId.STATE_WORK_CORE ->
-                "STATE_WORK_CORE • 3-Cycle Workday Anchor" to
-                    "Launch window open (11:30–14:00). Target 4h 44m block wakes before 21:00 shift."
+                "Afternoon Workday Sleep (4h 44m)" to
+                    "Sleep window open (11:30–14:00). Full 3-cycle sleep before your 21:00 shift."
             ProtocolStateId.STATE_WORK_NAP ->
-                "STATE_WORK_NAP • Mid-Shift Adenosine Flush" to
-                    "Launch window open (01:00–02:00). Take 20m Flush Nap; delay caffeine until 02:00."
+                "20-Min Shift Power Nap" to
+                    "Take your 20m break nap whenever your break starts; save caffeine for after."
             ProtocolStateId.STATE_BRIDGE_TO_WKND ->
-                "STATE_BRIDGE_TO_WKND • 2-Cycle Bridge #1" to
-                    "Saturday morning bridge (3h 14m cap). Builds pressure for 01:00 Sat night."
+                "Saturday Morning Sleep (3h 14m)" to
+                    "Shorter 2-cycle morning sleep so you can sleep tonight at 01:00 AM."
             ProtocolStateId.STATE_WKND_CORE ->
-                "STATE_WKND_CORE • 3-Cycle Weekend Block" to
-                    "Weekend core recovery block anchored at 01:00 (4h 44m)."
+                "Saturday Night Full Sleep (4h 44m)" to
+                    "Weekend night sleep anchored at 01:00 AM (4h 44m)."
             ProtocolStateId.STATE_BRIDGE_TO_WORK ->
-                "STATE_BRIDGE_TO_WORK • 2-Cycle Bridge #2" to
-                    "Mandatory 2-cycle bridge (3h 14m cap). Guarantees ~8.25h wakefulness before Monday 12:30 Work Core."
+                "Sunday Night Reset Sleep (3h 14m)" to
+                    "Short 2-cycle sleep (3h 14m) so you're tired enough for Monday's 12:30 PM sleep."
+            ProtocolStateId.UNFULFILLED_ANCHOR_DELAYED ->
+                (primaryWindowStatus.delayedRecoveryHeadline ?: "Late Sleep Adjustment") to
+                    "Dynamically adjusted sleep block."
             ProtocolStateId.STATE_WAKE_LOCKOUT ->
-                "WAKE LOCKOUT ACTIVE" to
-                    "Building Homeostatic Pressure."
+                "Stay Awake Window" to
+                    "Building sleep drive for your next bedtime."
         }
     }
 }

@@ -45,3 +45,7 @@ captures/
 # OS-generated files
 .DS_Store
 Thumbs.db
+
+# Private Documentation / Internal Records
+docs/
+

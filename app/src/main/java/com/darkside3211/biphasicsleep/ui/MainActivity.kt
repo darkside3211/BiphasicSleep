@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -130,6 +131,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        HybridAlarmScheduler.loadPersistedSessionState(applicationContext)
         setContent {
             BiphasicSleepTheme {
                 Surface(
@@ -353,10 +355,18 @@ private fun CircadianTopBar(
                     )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
+                val modeLabel = when {
+                    uiState.phaseEvaluation.primaryAnchorWindow.isUnfulfilledAnchorDelayed ->
+                        "Late Sleep Mode • Adjusted Cycles"
+                    state.isWeekendMode ->
+                        "Weekend Schedule"
+                    else ->
+                        "Work-Week Schedule (9 PM – 6 AM Shift)"
+                }
                 Text(
-                    text = if (state.isWeekendMode) "Weekend Transition" else "Work-Week Biphasic",
+                    text = modeLabel,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (state.isWeekendMode) CircadianAmber else AnchorCyan,
+                    color = if (state.isWeekendMode || uiState.phaseEvaluation.primaryAnchorWindow.isUnfulfilledAnchorDelayed) CircadianAmber else AnchorCyan,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -436,7 +446,18 @@ private fun SleepScreen(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Active Armed Alarm or 5-Minute Anti-Backslide Check-In
+        // 1. Event-Driven Session Completion Tracker Bar
+        SessionCompletionTrackerBar(
+            uiState = uiState,
+            onLogSleepCompletedNow = {
+                viewModel.recordAnchorCompleted(uiState.currentClock, context)
+            },
+            onClearSessionState = {
+                viewModel.clearCompletedSessionHistory(context)
+            }
+        )
+
+        // 2. Active Armed Alarm or 5-Minute Anti-Backslide Check-In
         if (pendingAntiBackslide != null) {
             PendingAntiBackslideCard(
                 info = pendingAntiBackslide,
@@ -471,7 +492,7 @@ private fun SleepScreen(
             )
         }
 
-        // 2. Zero-Nap Weekend or Deviation Lockout Banner
+        // 3. Zero-Nap Weekend or Deviation Lockout Banner
         if (eval.weekendLockoutStatus.isLockoutActive) {
             WeekendLockoutBanner(
                 status = eval.weekendLockoutStatus,
@@ -479,20 +500,28 @@ private fun SleepScreen(
             )
         }
 
-        // 3. Top Primary Anchor Card: Hero Single-Action CTA during launch window,
-        // or STATE_WAKE_LOCKOUT countdown card outside scheduled windows (Section 4.A & 4.B)
+        // 4. Top Primary Anchor Card: Hero Single-Action CTA during launch window or UNFULFILLED_ANCHOR_DELAYED,
+        // or STATE_WAKE_LOCKOUT countdown card after sleep is completed
         if (eval.primaryAnchorWindow.isInActiveLaunchWindow && eval.primaryAnchorWindow.permittedActionOption != null) {
+            val defaultOption = eval.primaryAnchorWindow.permittedActionOption
+            val activeOption = eval.primaryAnchorWindow.availableCycleOptions
+                .firstOrNull { it.blockType == uiState.selectedCustomCycleBlock }
+                ?: defaultOption
             HeroPrimarySleepCard(
-                primaryOption = eval.primaryAnchorWindow.permittedActionOption,
+                primaryOption = activeOption,
+                windowStatus = eval.primaryAnchorWindow,
                 currentState = eval.primaryAnchorWindow.activeStateId,
                 config = uiState.config,
+                onSelectCycleBlock = { block ->
+                    viewModel.selectCustomCycleBlock(block)
+                },
                 onArmPrimary = {
-                    viewModel.armSleepBlockAlarm(context, eval.primaryAnchorWindow.permittedActionOption.blockType)
+                    viewModel.armSleepBlockAlarm(context, activeOption.blockType)
                 },
                 onArmSystemClock = {
                     viewModel.armSleepBlockAlarm(
                         context = context,
-                        blockType = eval.primaryAnchorWindow.permittedActionOption.blockType,
+                        blockType = activeOption.blockType,
                         forceSystemClockIntent = true
                     )
                 }
@@ -501,11 +530,16 @@ private fun SleepScreen(
             WakeLockoutHeroCard(
                 status = eval.primaryAnchorWindow,
                 onOpenEmergencyOverride = { showEmergencyOverrideDialog = true },
-                onOpenRecovery = onOpenRecoveryTab
+                onOpenRecovery = onOpenRecoveryTab,
+                onUnlockIfNotSlept = if (eval.primaryAnchorWindow.isAnchorCompletedForCurrentCycle) {
+                    { viewModel.clearCompletedSessionHistory(context) }
+                } else {
+                    null
+                }
             )
         }
 
-        // 4. Dynamic 20-Minute Adenosine Flush Nap Card (Section 4.C Hard-Lock Rules)
+        // 5. Dynamic 20-Minute Adenosine Flush Nap Card (Sliding Eligibility Window)
         DynamicNapFlushCard(
             napEvaluation = eval.napEvaluation,
             onArmNap = {
@@ -517,6 +551,9 @@ private fun SleepScreen(
                     blockType = SleepBlockType.FLUSH_NAP_20M,
                     forceSystemClockIntent = true
                 )
+            },
+            onMarkNapCompleted = {
+                viewModel.recordNapCompleted(uiState.currentClock, context)
             }
         )
 
@@ -539,19 +576,141 @@ private fun SleepScreen(
 }
 
 /**
- * Hero Primary Sleep Card with the custom CircadianArcGauge.
- * Displays ONLY the single permitted full-cycle CTA during an active launch window (Section 4.A).
+ * Compact Session Completion Status & 1-Tap Manual Wake/Reset Bar (v2.2 Event-Driven).
+ * Prevents phantom wall-clock lockouts while letting the user mark sleep complete if they used the OS Clock.
+ */
+@Composable
+private fun SessionCompletionTrackerBar(
+    uiState: ProtocolUiState,
+    onLogSleepCompletedNow: () -> Unit,
+    onClearSessionState: () -> Unit
+) {
+    val windowStatus = uiState.phaseEvaluation.primaryAnchorWindow
+    val napEval = uiState.phaseEvaluation.napEvaluation
+    val hasCompletedSleep = windowStatus.isAnchorCompletedForCurrentCycle
+    val hasCompletedNap = napEval.isNapCompletedInCurrentPeriod
+    val lastWake = uiState.activeSimulationPreset.simulatedLastWakeTime ?: uiState.lastWakeTimestamp
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .border(
+                1.dp,
+                if (hasCompletedSleep || hasCompletedNap) VerifiedEmerald.copy(alpha = 0.45f) else ObsidianBorderSubtle,
+                RoundedCornerShape(14.dp)
+            ),
+        color = if (hasCompletedSleep || hasCompletedNap) VerifiedEmeraldBg.copy(alpha = 0.45f) else ObsidianCardElevated
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Text(
+                    text = when {
+                        hasCompletedSleep && lastWake != null ->
+                            "SLEEP LOGGED • WOKE AT ${DeviationRecoveryCalculator.formatTime(lastWake)}"
+                        hasCompletedNap && lastWake != null ->
+                            "20M NAP LOGGED AT ${DeviationRecoveryCalculator.formatTime(lastWake)}"
+                        else ->
+                            "NO SLEEP LOGGED THIS CYCLE (0m)"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (hasCompletedSleep || hasCompletedNap) VerifiedEmerald else SoftSilver,
+                    fontSize = 10.sp
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (hasCompletedSleep || hasCompletedNap) {
+                        "Post-wake cooldown & schedule updated from your confirmed wake event."
+                    } else {
+                        "Used another alarm app? Tap 'I Just Woke Up' when you finish sleeping."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            }
+
+            if (hasCompletedSleep || hasCompletedNap || lastWake != null) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF28191D),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LockoutCrimson.copy(alpha = 0.5f)),
+                    modifier = Modifier.clickable { onClearSessionState() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = null,
+                            tint = LockoutCrimson,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Reset",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = LockoutCrimson
+                        )
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = VerifiedEmeraldBg,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, VerifiedEmerald.copy(alpha = 0.6f)),
+                    modifier = Modifier.clickable { onLogSleepCompletedNow() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = VerifiedEmerald,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "I Just Woke Up",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = VerifiedEmerald
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Hero Primary Sleep Card with the custom CircadianArcGauge, Dynamic Cycle Truncation Banner,
+ * Shifted Next Sleep Anchor indicator, and 1-Tap Cycle Switcher (3c / 2c / 1c).
  */
 @Composable
 private fun HeroPrimarySleepCard(
     primaryOption: SleepActionOption,
+    windowStatus: PrimaryAnchorWindowStatus,
     currentState: ProtocolStateId,
     config: com.darkside3211.biphasicsleep.domain.SleepProtocolConfig,
+    onSelectCycleBlock: (SleepBlockType) -> Unit,
     onArmPrimary: () -> Unit,
     onArmSystemClock: () -> Unit
 ) {
     val wakeStr = DeviationRecoveryCalculator.formatTime(primaryOption.calculatedWakeTime)
-    val accentColor = if (currentState.isWeekendMode) CircadianAmber else AnchorCyan
+    val isDelayedMode = windowStatus.isUnfulfilledAnchorDelayed
+    val accentColor = if (isDelayedMode || currentState.isWeekendMode) CircadianAmber else AnchorCyan
 
     BiometricCard(
         borderColor = accentColor.copy(alpha = 0.5f),
@@ -564,25 +723,83 @@ private fun HeroPrimarySleepCard(
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(
-                    text = currentState.title,
+                    text = if (isDelayedMode) {
+                        windowStatus.delayedRecoveryHeadline ?: currentState.title
+                    } else {
+                        currentState.title
+                    },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.ExtraBold,
                     color = TextPrimary
                 )
                 Text(
-                    text = currentState.scheduleWindowLabel,
+                    text = if (isDelayedMode) {
+                        "Next Sleep Target: ${DeviationRecoveryCalculator.formatTime(windowStatus.nextScheduledAnchorTime)}" +
+                            if (windowStatus.isAnchorPushedBack) {
+                                " (Shifted from ${DeviationRecoveryCalculator.formatTime(windowStatus.nominalNextAnchorTime)})"
+                            } else {
+                                ""
+                            }
+                    } else {
+                        currentState.scheduleWindowLabel
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = SoftSilver
+                    color = if (windowStatus.isAnchorPushedBack) CircadianAmber else SoftSilver,
+                    fontWeight = if (windowStatus.isAnchorPushedBack) FontWeight.Bold else FontWeight.Normal
                 )
             }
             StatusBadgePill(permission = primaryOption.permission)
+        }
+
+        // Dynamic Next Sleep Anchor Shift Pill when late arrival pushes 01:00 -> 02:00
+        if (windowStatus.isAnchorPushedBack) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFF281B0D),
+                border = androidx.compose.foundation.BorderStroke(1.dp, CircadianAmber.copy(alpha = 0.45f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.Schedule,
+                            contentDescription = null,
+                            tint = CircadianAmber,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "NEXT SLEEP ANCHOR SHIFTED",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            color = CircadianAmber
+                        )
+                    }
+                    Text(
+                        text = "${DeviationRecoveryCalculator.formatTime(windowStatus.nominalNextAnchorTime)} -> ${DeviationRecoveryCalculator.formatTime(windowStatus.nextScheduledAnchorTime)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = TextPrimary
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(14.dp))
 
         // Center Gauge with Tabular Numerals
         CircadianArcGauge(
-            progress = if (primaryOption.blockType == SleepBlockType.FLUSH_NAP_20M) 0.35f else 1f,
+            progress = when (primaryOption.blockType) {
+                SleepBlockType.FLUSH_NAP_20M -> 0.35f
+                SleepBlockType.RECOVERY_1_CYCLE -> 0.55f
+                SleepBlockType.BRIDGE_2_CYCLES -> 0.78f
+                SleepBlockType.CORE_3_CYCLES -> 1f
+            },
             arcColor = accentColor,
             modifier = Modifier
                 .fillMaxWidth()
@@ -590,7 +807,7 @@ private fun HeroPrimarySleepCard(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "TARGET WAKE",
+                    text = "WAKE UP AT",
                     style = MaterialTheme.typography.labelSmall,
                     color = SoftSilver,
                     fontWeight = FontWeight.Bold
@@ -601,7 +818,7 @@ private fun HeroPrimarySleepCard(
                     color = TextPrimary
                 )
                 Text(
-                    text = "+${primaryOption.durationMinutes} min",
+                    text = "${DeviationRecoveryCalculator.formatDuration( java.time.Duration.ofMinutes(primaryOption.durationMinutes.toLong()))} (${primaryOption.durationMinutes}m)",
                     style = MaterialTheme.typography.titleMedium,
                     color = accentColor,
                     fontWeight = FontWeight.Bold
@@ -619,12 +836,91 @@ private fun HeroPrimarySleepCard(
             accentColor = accentColor
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // Large 56dp Single Permitted Action Button
+        // Plain-English Explanation & Weekday 6:00 PM Commute Note
+        Text(
+            text = primaryOption.guardrailReason,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary
+        )
+
+        if (windowStatus.leewayAdvisoryText != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = windowStatus.leewayAdvisoryText,
+                style = MaterialTheme.typography.bodySmall,
+                color = AnchorCyan,
+                fontSize = 11.sp
+            )
+        }
+
+        // 1-Tap Flexible Cycle Switcher (3 Cycles / 2 Cycles / 1 Cycle)
+        if (windowStatus.availableCycleOptions.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "ADJUST SLEEP LENGTH (1-TAP SWITCH):",
+                style = MaterialTheme.typography.labelSmall,
+                color = SoftSilver,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                windowStatus.availableCycleOptions.forEach { option ->
+                    val isSelected = option.blockType == primaryOption.blockType
+                    val isRecommended = option.blockType == windowStatus.permittedBlockType
+                    val optWakeStr = DeviationRecoveryCalculator.formatTime(option.calculatedWakeTime)
+                    val optDurStr = DeviationRecoveryCalculator.formatDuration(
+                        java.time.Duration.ofMinutes(option.durationMinutes.toLong())
+                    )
+                    val pillColor = if (isSelected) accentColor else SoftSilver
+
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) accentColor else ObsidianBorder,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onSelectCycleBlock(option.blockType) },
+                        color = if (isSelected) accentColor.copy(alpha = 0.16f) else ObsidianCardElevated
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "${option.blockType.cyclesCount}c • $optDurStr",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = pillColor,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "Wake $optWakeStr" + if (isRecommended) " ★" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isSelected) TextPrimary else MutedSlate,
+                                fontSize = 10.sp,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Large 54dp Action Button
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Button(
@@ -633,20 +929,23 @@ private fun HeroPrimarySleepCard(
                     .weight(1f)
                     .height(54.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.PlayArrow,
                     contentDescription = null,
                     tint = Color.Black,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "${primaryOption.blockType.ctaLabel} ($wakeStr)",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.labelLarge,
                     color = Color.Black,
-                    fontWeight = FontWeight.Black
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
 
@@ -654,19 +953,22 @@ private fun HeroPrimarySleepCard(
                 onClick = onArmSystemClock,
                 modifier = Modifier.height(54.dp),
                 shape = RoundedCornerShape(16.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+                border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Alarm,
                     contentDescription = "Set OS Alarm",
                     tint = AnchorCyan,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = "OS Clock",
                     style = MaterialTheme.typography.labelMedium,
-                    color = AnchorCyan
+                    color = AnchorCyan,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -674,15 +976,15 @@ private fun HeroPrimarySleepCard(
 }
 
 /**
- * Top Primary Card during STATE_WAKE_LOCKOUT (Section 4.B).
- * Renders "WAKE LOCKOUT ACTIVE — Building Homeostatic Pressure" with a live countdown
- * to the next scheduled anchor, physically preventing wrong-cycle selection while groggy.
+ * Top Primary Card during STATE_WAKE_LOCKOUT.
+ * Renders a plain-English Stay Awake countdown card to the next scheduled sleep.
  */
 @Composable
 private fun WakeLockoutHeroCard(
     status: PrimaryAnchorWindowStatus,
     onOpenEmergencyOverride: () -> Unit,
-    onOpenRecovery: () -> Unit
+    onOpenRecovery: () -> Unit,
+    onUnlockIfNotSlept: (() -> Unit)? = null
 ) {
     BiometricCard(
         borderColor = LockoutCrimson.copy(alpha = 0.5f),
@@ -705,10 +1007,11 @@ private fun WakeLockoutHeroCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "WAKE LOCKOUT ACTIVE",
+                    text = "STAY AWAKE WINDOW",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black,
-                    color = LockoutCrimson
+                    color = LockoutCrimson,
+                    maxLines = 1
                 )
             }
             StatusBadgePill(permission = GuardrailPermission.LOCKED_ZERO_NAP_PROTOCOL)
@@ -716,7 +1019,11 @@ private fun WakeLockoutHeroCard(
 
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Building Homeostatic Sleep Pressure",
+            text = if (status.isAnchorCompletedForCurrentCycle) {
+                "You already finished your sleep for this period"
+            } else {
+                "Stay awake so you can fall asleep easily at your next target time"
+            },
             style = MaterialTheme.typography.bodySmall,
             color = SoftSilver
         )
@@ -735,31 +1042,46 @@ private fun WakeLockoutHeroCard(
                 .fillMaxWidth()
                 .height(180.dp)
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                modifier = Modifier.padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text(
-                    text = "NEXT ANCHOR IN",
+                    text = "NEXT SLEEP IN",
                     style = MaterialTheme.typography.labelSmall,
                     color = SoftSilver,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
                 Text(
                     text = countdownStr,
                     style = MaterialTheme.typography.displayMedium,
-                    color = TextPrimary
+                    color = TextPrimary,
+                    maxLines = 1
                 )
                 Text(
-                    text = "${status.nextScheduledAnchorState.codeName} ($nextTimeStr)",
+                    text = "AT $nextTimeStr",
                     style = MaterialTheme.typography.titleSmall,
                     color = CircadianAmber,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Full-cycle sleep is locked out to protect residual sleep pressure for ${status.nextScheduledAnchorState.title} at $nextTimeStr. Napping or sleeping now risks destroying your shift rhythm.",
+            text = "Upcoming: ${status.nextScheduledAnchorState.title} ($nextTimeStr)",
+            style = MaterialTheme.typography.labelMedium,
+            color = CircadianAmber,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = "Main sleep is paused so you stay tired enough for ${status.nextScheduledAnchorState.title} at $nextTimeStr. Sleeping a full cycle right now will make it hard to sleep later.",
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary
         )
@@ -776,7 +1098,8 @@ private fun WakeLockoutHeroCard(
                     .weight(1f)
                     .height(50.dp),
                 shape = RoundedCornerShape(14.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF452B10))
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF452B10)),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Security,
@@ -786,34 +1109,59 @@ private fun WakeLockoutHeroCard(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Emergency Override",
+                    text = "Sleep Anyway",
                     style = MaterialTheme.typography.labelMedium,
                     color = CircadianAmber,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
             }
 
-            OutlinedButton(
-                onClick = onOpenRecovery,
-                modifier = Modifier.height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
-            ) {
-                Text("Recovery Tab", color = SoftSilver, style = MaterialTheme.typography.labelMedium)
+            if (onUnlockIfNotSlept != null) {
+                OutlinedButton(
+                    onClick = onUnlockIfNotSlept,
+                    modifier = Modifier.height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AnchorCyan.copy(alpha = 0.5f)),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = "Didn't Sleep? Unlock",
+                        color = AnchorCyan,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1
+                    )
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onOpenRecovery,
+                    modifier = Modifier.height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = "Recovery Tab",
+                        color = SoftSilver,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
 }
 
 /**
- * Dedicated Dynamic 20-Minute Adenosine Flush Card (Section 4.C).
- * Real-time hard-lock calculation: greyed out and unclickable with reason banner when locked.
+ * Dedicated Dynamic 20-Minute Power Nap Card (v2.2 Sliding Eligibility Window).
+ * Unlocked throughout shift/wake window until taken or within 4h of next core sleep.
  */
 @Composable
 private fun DynamicNapFlushCard(
     napEvaluation: NapLockoutEvaluation,
     onArmNap: () -> Unit,
-    onArmSystemClock: () -> Unit
+    onArmSystemClock: () -> Unit,
+    onMarkNapCompleted: () -> Unit
 ) {
     val isLocked = napEvaluation.isHardLocked
     val accent = if (isLocked) LockoutCrimson else AnchorCyan
@@ -836,7 +1184,10 @@ private fun DynamicNapFlushCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
                         imageVector = if (isLocked) Icons.Rounded.Lock else Icons.Rounded.Coffee,
                         contentDescription = null,
@@ -845,10 +1196,11 @@ private fun DynamicNapFlushCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "20M ADENOSINE FLUSH NAP",
+                        text = "20-MIN POWER NAP",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Black,
-                        color = accent
+                        color = accent,
+                        maxLines = 1
                     )
                 }
                 StatusBadgePill(
@@ -890,7 +1242,8 @@ private fun DynamicNapFlushCard(
                         containerColor = AnchorCyan,
                         disabledContainerColor = Color(0xFF1E1E26)
                     ),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                 ) {
                     Icon(
                         imageVector = if (isLocked) Icons.Rounded.Lock else Icons.Rounded.PlayArrow,
@@ -901,13 +1254,15 @@ private fun DynamicNapFlushCard(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = if (isLocked) {
-                            "Locked (Hard-Lock Rule)"
+                            "Nap Locked"
                         } else {
-                            "Arm 20m Adenosine Flush (+20m)"
+                            "Start 20m Nap (+20m)"
                         },
                         color = if (isLocked) MutedSlate else Color.Black,
                         fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.labelLarge
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
@@ -916,13 +1271,29 @@ private fun DynamicNapFlushCard(
                         onClick = onArmSystemClock,
                         modifier = Modifier.height(50.dp),
                         shape = RoundedCornerShape(14.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Alarm,
                             contentDescription = "OS Clock",
                             tint = AnchorCyan,
                             modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onMarkNapCompleted,
+                        modifier = Modifier.height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = "Done",
+                            color = SoftSilver,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -2220,6 +2591,7 @@ private fun ScheduleScreen(
                 ProtocolStateId.STATE_BRIDGE_TO_WKND -> SimulationPreset.SAT_BRIDGE_0800
                 ProtocolStateId.STATE_WKND_CORE -> SimulationPreset.SAT_BOREDOM_LOCKOUT_2000
                 ProtocolStateId.STATE_BRIDGE_TO_WORK -> SimulationPreset.MON_BRIDGE_0100
+                ProtocolStateId.UNFULFILLED_ANCHOR_DELAYED -> SimulationPreset.SAT_BRIDGE_0800
                 ProtocolStateId.STATE_WAKE_LOCKOUT -> SimulationPreset.INCIDENT_2_WAKE_LOCKOUT_0605
             }
 
@@ -2229,6 +2601,7 @@ private fun ScheduleScreen(
                 ProtocolStateId.STATE_BRIDGE_TO_WKND -> cfg.satBridgeStart to cfg.satBridgeEnd
                 ProtocolStateId.STATE_WKND_CORE -> cfg.wkndCoreStart to cfg.wkndCoreEnd
                 ProtocolStateId.STATE_BRIDGE_TO_WORK -> cfg.monBridgeStart to cfg.monBridgeEnd
+                ProtocolStateId.UNFULFILLED_ANCHOR_DELAYED -> null to null
                 ProtocolStateId.STATE_WAKE_LOCKOUT -> null to null
             }
 

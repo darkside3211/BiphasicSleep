@@ -37,6 +37,7 @@ data class ArmedAlarmInfo(
 
 data class PendingAntiBackslideInfo(
     val sourceBlockTitle: String,
+    val sourceBlockType: SleepBlockType = SleepBlockType.CORE_3_CYCLES,
     val dismissedAtMillis: Long,
     val checkInTriggerMillis: Long,
     val delayMinutes: Int
@@ -46,10 +47,11 @@ data class PendingAntiBackslideInfo(
 }
 
 /**
- * Module 1 & Module 4: Dynamic Cycle Alarm Calculator + Anti-Backslide Scheduler.
+ * Module 1 & Module 4: Dynamic Cycle Alarm Calculator + Event-Driven Session Persistence.
  *
- * Uses exact Doze-piercing AlarmManager.setAlarmClock() and optionally dispatches
- * AlarmClock.ACTION_SET_ALARM to the Android System Clock app.
+ * Uses exact Doze-piercing AlarmManager.setAlarmClock(), optionally dispatches
+ * AlarmClock.ACTION_SET_ALARM to the Android System Clock app, and persists explicit
+ * SLEEP_COMPLETED and NAP_COMPLETED timestamps in SharedPreferences.
  */
 object HybridAlarmScheduler {
 
@@ -67,6 +69,11 @@ object HybridAlarmScheduler {
     const val EXTRA_ENABLE_ANTI_BACKSLIDE = "extra_enable_anti_backslide"
     const val EXTRA_ANTI_BACKSLIDE_MINUTES = "extra_anti_backslide_minutes"
 
+    private const val PREFS_NAME = "biphasic_sleep_session_prefs"
+    private const val KEY_LAST_COMPLETED_ANCHOR_MILLIS = "last_completed_anchor_millis"
+    private const val KEY_LAST_COMPLETED_NAP_MILLIS = "last_completed_nap_millis"
+    private const val KEY_LAST_VERIFIED_WAKE_MILLIS = "last_verified_wake_millis"
+
     private const val REQUEST_CODE_PRIMARY_ALARM = 1001
     private const val REQUEST_CODE_ANTI_BACKSLIDE = 1002
 
@@ -79,8 +86,60 @@ object HybridAlarmScheduler {
     private val _lastVerifiedWakeMillis = MutableStateFlow<Long?>(null)
     val lastVerifiedWakeMillis: StateFlow<Long?> = _lastVerifiedWakeMillis.asStateFlow()
 
+    private val _lastCompletedAnchorMillis = MutableStateFlow<Long?>(null)
+    val lastCompletedAnchorMillis: StateFlow<Long?> = _lastCompletedAnchorMillis.asStateFlow()
+
+    private val _lastCompletedNapMillis = MutableStateFlow<Long?>(null)
+    val lastCompletedNapMillis: StateFlow<Long?> = _lastCompletedNapMillis.asStateFlow()
+
+    fun loadPersistedSessionState(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val anchorMillis = prefs.getLong(KEY_LAST_COMPLETED_ANCHOR_MILLIS, -1L).takeIf { it > 0L }
+        val napMillis = prefs.getLong(KEY_LAST_COMPLETED_NAP_MILLIS, -1L).takeIf { it > 0L }
+        val wakeMillis = prefs.getLong(KEY_LAST_VERIFIED_WAKE_MILLIS, -1L).takeIf { it > 0L }
+        _lastCompletedAnchorMillis.value = anchorMillis
+        _lastCompletedNapMillis.value = napMillis
+        _lastVerifiedWakeMillis.value = wakeMillis
+    }
+
+    fun recordSessionCompletion(
+        context: Context?,
+        blockType: SleepBlockType,
+        completedAtMillis: Long = System.currentTimeMillis()
+    ) {
+        _lastVerifiedWakeMillis.value = completedAtMillis
+        if (blockType == SleepBlockType.FLUSH_NAP_20M) {
+            _lastCompletedNapMillis.value = completedAtMillis
+        } else {
+            _lastCompletedAnchorMillis.value = completedAtMillis
+        }
+
+        context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.edit()?.apply {
+            putLong(KEY_LAST_VERIFIED_WAKE_MILLIS, completedAtMillis)
+            if (blockType == SleepBlockType.FLUSH_NAP_20M) {
+                putLong(KEY_LAST_COMPLETED_NAP_MILLIS, completedAtMillis)
+            } else {
+                putLong(KEY_LAST_COMPLETED_ANCHOR_MILLIS, completedAtMillis)
+            }
+            apply()
+        }
+    }
+
+    fun clearPersistedSessionState(context: Context?) {
+        _lastVerifiedWakeMillis.value = null
+        _lastCompletedAnchorMillis.value = null
+        _lastCompletedNapMillis.value = null
+        context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.edit()?.apply {
+            remove(KEY_LAST_VERIFIED_WAKE_MILLIS)
+            remove(KEY_LAST_COMPLETED_ANCHOR_MILLIS)
+            remove(KEY_LAST_COMPLETED_NAP_MILLIS)
+            apply()
+        }
+    }
+
     fun recordManualWakeEvent(wakeMillis: Long = System.currentTimeMillis()) {
         _lastVerifiedWakeMillis.value = wakeMillis
+        _lastCompletedAnchorMillis.value = wakeMillis
     }
 
     fun scheduleSleepBlockAlarm(
@@ -128,7 +187,6 @@ object HybridAlarmScheduler {
             val clockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, showPendingIntent)
             alarmManager.setAlarmClock(clockInfo, operationPendingIntent)
         } catch (se: SecurityException) {
-            // Fallback if exact alarm permission is revoked by user in OS settings
             alarmManager.setAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 triggerAtMillis,
@@ -141,7 +199,7 @@ object HybridAlarmScheduler {
             systemClockDispatched = dispatchAndroidSystemClockIntent(
                 context = context,
                 triggerAtMillis = triggerAtMillis,
-                label = "Biphasic ${stateId.codeName}: ${blockType.shortTitle}"
+                label = "Biphasic ${stateId.title}: ${blockType.shortTitle}"
             )
         }
 
@@ -193,12 +251,12 @@ object HybridAlarmScheduler {
 
     /**
      * Module 4: Schedules the 5-minute Anti-Backslide secondary check-in after alarm dismissal.
-     * If the user does not confirm they are still out of bed before checkInTriggerMillis,
-     * the full alarm & challenge re-triggers to prevent the "Oct 17 Accidental Nap Trap".
+     * Also records the session completion (SLEEP_COMPLETED or NAP_COMPLETED) in SharedPreferences.
      */
     fun scheduleAntiBackslideCheckIn(
         context: Context,
         sourceBlockTitle: String,
+        sourceBlockType: SleepBlockType = SleepBlockType.CORE_3_CYCLES,
         delayMinutes: Int = 5,
         requireSteps: Boolean = true,
         requiredStepCount: Int = 15,
@@ -211,7 +269,7 @@ object HybridAlarmScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val receiverIntent = Intent(context, AlarmReceiver::class.java).apply {
             action = ACTION_ANTI_BACKSLIDE_CHECK
-            putExtra(EXTRA_BLOCK_TYPE, SleepBlockType.FLUSH_NAP_20M.name)
+            putExtra(EXTRA_BLOCK_TYPE, sourceBlockType.name)
             putExtra(EXTRA_STATE_ID, ProtocolStateId.STATE_WORK_NAP.name)
             putExtra(EXTRA_IS_ANTI_BACKSLIDE, true)
             putExtra(EXTRA_REQUIRE_STEPS, requireSteps)
@@ -247,11 +305,12 @@ object HybridAlarmScheduler {
 
         val info = PendingAntiBackslideInfo(
             sourceBlockTitle = sourceBlockTitle,
+            sourceBlockType = sourceBlockType,
             dismissedAtMillis = nowMillis,
             checkInTriggerMillis = triggerMillis,
             delayMinutes = delayMinutes
         )
-        _lastVerifiedWakeMillis.value = nowMillis
+        recordSessionCompletion(context, sourceBlockType, nowMillis)
         _pendingAntiBackslide.value = info
         _armedAlarm.value = null
         return info
@@ -269,7 +328,8 @@ object HybridAlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(pendingIntent)
-        _lastVerifiedWakeMillis.value = System.currentTimeMillis()
+        val completedBlock = _pendingAntiBackslide.value?.sourceBlockType ?: SleepBlockType.CORE_3_CYCLES
+        recordSessionCompletion(context, completedBlock, System.currentTimeMillis())
         _pendingAntiBackslide.value = null
     }
 
@@ -297,9 +357,11 @@ object HybridAlarmScheduler {
         config: SleepProtocolConfig,
         isAntiBackslideCheck: Boolean = false
     ) {
+        val armedBlock = _armedAlarm.value?.blockType ?: SleepBlockType.FLUSH_NAP_20M
+        val armedState = _armedAlarm.value?.stateId ?: ProtocolStateId.STATE_WORK_NAP
         val serviceIntent = Intent(context, AlarmRingingService::class.java).apply {
-            putExtra(EXTRA_BLOCK_TYPE, SleepBlockType.FLUSH_NAP_20M.name)
-            putExtra(EXTRA_STATE_ID, ProtocolStateId.STATE_WORK_NAP.name)
+            putExtra(EXTRA_BLOCK_TYPE, armedBlock.name)
+            putExtra(EXTRA_STATE_ID, armedState.name)
             putExtra(EXTRA_IS_ANTI_BACKSLIDE, isAntiBackslideCheck)
             putExtra(EXTRA_REQUIRE_STEPS, config.enableStepChallenge)
             putExtra(EXTRA_REQUIRED_STEP_COUNT, config.requiredSteps)

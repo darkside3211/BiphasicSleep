@@ -1,4 +1,4 @@
-﻿package com.darkside3211.biphasicsleep.ui
+package com.darkside3211.biphasicsleep.ui
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -194,6 +194,22 @@ fun CycleBreakdownBar(
                             .background(CircadianAmber)
                     )
                 }
+                SleepBlockType.RECOVERY_1_CYCLE -> {
+                    // Latency Buffer (14m)
+                    Box(
+                        modifier = Modifier
+                            .weight(14f)
+                            .height(8.dp)
+                            .background(CircadianAmber.copy(alpha = 0.45f))
+                    )
+                    // Cycle 1 (90m)
+                    Box(
+                        modifier = Modifier
+                            .weight(90f)
+                            .height(8.dp)
+                            .background(CircadianAmber)
+                    )
+                }
                 SleepBlockType.FLUSH_NAP_20M -> {
                     // 20m Flush
                     Box(
@@ -362,19 +378,19 @@ fun StatusBadgePill(
             VerifiedEmeraldBg,
             VerifiedEmerald,
             Icons.Rounded.CheckCircle,
-            "PRIMARY ANCHOR"
+            "RECOMMENDED"
         )
         GuardrailPermission.ALLOWED_SECONDARY -> Quadruple(
             Color(0xFF152233),
             AnchorCyan,
             Icons.Rounded.Schedule,
-            "SECONDARY"
+            "AVAILABLE"
         )
         GuardrailPermission.WARN_INSOMNIA_OR_CIRCADIAN_RISK -> Quadruple(
             Color(0xFF2E1F0A),
             CircadianAmber,
             Icons.Rounded.WarningAmber,
-            "GUARDRAIL WARN"
+            "HEADS UP"
         )
         GuardrailPermission.LOCKED_ZERO_NAP_PROTOCOL -> Quadruple(
             LockoutCrimsonBg,
@@ -404,7 +420,7 @@ fun StatusBadgePill(
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.ExtraBold,
             color = contentColor,
-            fontSize = 10.sp
+            fontSize = 10.sp, maxLines = 1, softWrap = false
         )
     }
 }

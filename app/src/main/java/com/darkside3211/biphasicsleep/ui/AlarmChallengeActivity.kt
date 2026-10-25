@@ -1,4 +1,4 @@
-﻿package com.darkside3211.biphasicsleep.ui
+package com.darkside3211.biphasicsleep.ui
 
 import android.os.Build
 import android.os.Bundle
@@ -137,6 +137,7 @@ class AlarmChallengeActivity : ComponentActivity() {
                                 HybridAlarmScheduler.scheduleAntiBackslideCheckIn(
                                     context = applicationContext,
                                     sourceBlockTitle = "${stateId.title} (${blockType.shortTitle})",
+                                    sourceBlockType = blockType,
                                     delayMinutes = antiBackslideMinutes,
                                     requireSteps = requireSteps,
                                     requiredStepCount = requiredStepCount,
@@ -144,6 +145,7 @@ class AlarmChallengeActivity : ComponentActivity() {
                                     registeredBarcode = registeredBarcode
                                 )
                             } else {
+                                HybridAlarmScheduler.recordSessionCompletion(applicationContext, blockType)
                                 HybridAlarmScheduler.cancelArmedAlarm(applicationContext)
                             }
                             finish()

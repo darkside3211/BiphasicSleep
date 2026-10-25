@@ -1,4 +1,4 @@
-﻿package com.darkside3211.biphasicsleep.domain
+package com.darkside3211.biphasicsleep.domain
 
 import java.time.DayOfWeek
 import java.time.Duration
@@ -12,7 +12,7 @@ import kotlin.math.roundToInt
 data class DeviationInput(
     val sleepStartTimestamp: ZonedDateTime,
     val actualWakeTimestamp: ZonedDateTime,
-    val triggerReason: String = "Unscheduled early sleep onset / accidental nap conversion"
+    val triggerReason: String = "Off-schedule sleep or accidental long nap"
 )
 
 data class RecoveryStep(
@@ -47,7 +47,7 @@ data class DeviationRecoveryPlan(
  * - If Time_Until_Next_Anchor >= 16 hours: Enforces a strict Zero-Nap Lockout until the anchor.
  * - If the subsequent 12:30 workday core anchor is within 8–12 hours after an overnight block:
  *   Automatically caps the preceding overnight sleep block to 2 cycles (3h 14m) so sufficient
- *   homeostatic sleep pressure (~8.25h wakefulness) remains for Monday's 12:30 core block.
+ *   sleep drive (~8.25h awake) remains for Monday's 12:30 afternoon sleep.
  */
 class DeviationRecoveryCalculator(
     private val config: SleepProtocolConfig = SleepProtocolConfig()
@@ -62,7 +62,7 @@ class DeviationRecoveryCalculator(
             .coerceAtLeast(1)
 
         val wakeTime = input.actualWakeTimestamp
-        val (nextAnchorTime, nextAnchorState) = resolveNextAnchor(wakeTime)
+        val (nextAnchorTime, nextAnchorState) = resolveNextAnchor(wakeTime, estimatedCycles)
         val timeUntilNextAnchor = Duration.between(wakeTime, nextAnchorTime)
 
         // Rule 1: If Time_Until_Next_Anchor >= 16 hours, enforce strict Zero-Nap Lockout
@@ -99,28 +99,27 @@ class DeviationRecoveryCalculator(
 
         val analysis = buildList {
             add(
-                "Wake-Window Alignment: Sleep onset at ${formatTime(input.sleepStartTimestamp)} lasted " +
-                    "${sleepHours}h ${sleepRemMinutes}m (~$estimatedCycles ultradian cycles + latency), " +
-                    "landing at ${formatTime(wakeTime)} (within ${formatDuration(wakeDelta)} of the " +
-                    "${formatTime(baselineWake)} baseline wake target)."
+                "Sleep Summary: Slept from ${formatTime(input.sleepStartTimestamp)} to ${formatTime(wakeTime)} " +
+                    "(${sleepHours}h ${sleepRemMinutes}m, ~$estimatedCycles cycles), " +
+                    "${formatDuration(wakeDelta)} from the ${formatTime(baselineWake)} scheduled wake time."
             )
             if (estimatedCycles >= 4) {
                 add(
-                    "Sleep Debt Clearance: The $estimatedCycles-cycle block cleared cumulative work-week " +
-                        "sleep debt, providing an extended homeostatic energy buffer for the daytime stretch."
+                    "Extra Sleep Logged: This $estimatedCycles-cycle sleep cleared built-up fatigue, " +
+                        "so you have plenty of energy to stay awake until ${formatTime(nextAnchorTime)}."
                 )
             }
             add(
-                "Adjusted Wake Duration: Daytime wake window is now ${wakeStretchHours}h ${wakeStretchRemMinutes}m " +
-                    "(${formatTime(wakeTime)} to ${formatTime(nextAnchorTime)})."
+                "Awake Window: Stay awake for ${wakeStretchHours}h ${wakeStretchRemMinutes}m " +
+                    "(${formatTime(wakeTime)} to ${formatTime(nextAnchorTime)}) so you can fall asleep on time."
             )
             if (capOvernightToTwoCycles && wakeToWorkCoreIf2Cycles != null && wakeToWorkCoreIf3Cycles != null) {
                 add(
-                    "Pre-Shift Insomnia Guardrail: Capping ${formatTime(nextAnchorTime)} sleep to 2 cycles " +
-                        "(3h 14m -> wake ${formatTime(postOvernightWake2Cycle)}) guarantees " +
-                        "${formatDuration(wakeToWorkCoreIf2Cycles)} of wakefulness before 12:30 STATE_WORK_CORE. " +
-                        "A 3-cycle sleep (waking at ${formatTime(postOvernightWake3Cycle)}) would leave only " +
-                        "${formatDuration(wakeToWorkCoreIf3Cycles)}, causing pre-shift insomnia."
+                    "Pre-Shift Sleep Guardrail: Keep your ${formatTime(nextAnchorTime)} sleep to 2 cycles " +
+                        "(3h 14m -> wake ${formatTime(postOvernightWake2Cycle)}) so you get " +
+                        "${formatDuration(wakeToWorkCoreIf2Cycles)} awake before your 12:30 PM workday sleep. " +
+                        "Sleeping 3 cycles (waking at ${formatTime(postOvernightWake3Cycle)}) leaves only " +
+                        "${formatDuration(wakeToWorkCoreIf3Cycles)}, making it hard to sleep before work."
                 )
             }
         }
@@ -137,11 +136,11 @@ class DeviationRecoveryCalculator(
         )
 
         val headline = if (enforceZeroNapLockout && capOvernightToTwoCycles) {
-            "ZERO-NAP LOCKOUT (${wakeStretchHours}h ${wakeStretchRemMinutes}m) + 2-CYCLE BRIDGE CAP"
+            "STAY AWAKE (${wakeStretchHours}h ${wakeStretchRemMinutes}m) + CAP OVERNIGHT TO 3h 14m"
         } else if (enforceZeroNapLockout) {
-            "STRICT ZERO-NAP LOCKOUT UNTIL ${formatTime(nextAnchorTime)}"
+            "STAY AWAKE (NO NAPS) UNTIL ${formatTime(nextAnchorTime)}"
         } else {
-            "CAP NEXT BLOCK TO 2 CYCLES (3h 14m)"
+            "CAP NEXT SLEEP TO 2 CYCLES (3h 14m)"
         }
 
         return DeviationRecoveryPlan(
@@ -162,21 +161,24 @@ class DeviationRecoveryCalculator(
         )
     }
 
-    private fun resolveNextAnchor(wakeTime: ZonedDateTime): Pair<ZonedDateTime, ProtocolStateId> {
+    private fun resolveNextAnchor(
+        wakeTime: ZonedDateTime,
+        estimatedCycles: Int
+    ): Pair<ZonedDateTime, ProtocolStateId> {
         val day = wakeTime.dayOfWeek
         val localTime = wakeTime.toLocalTime()
 
         return when (day) {
             DayOfWeek.SATURDAY -> {
-                // Waking on Saturday after bridge or early nap -> next anchor is Sunday 01:00 STATE_WKND_CORE
                 val sunAnchor = wakeTime.toLocalDate().plusDays(1)
                     .atTime(config.wkndCoreStart)
                     .atZone(wakeTime.zone)
                 sunAnchor to ProtocolStateId.STATE_WKND_CORE
             }
             DayOfWeek.SUNDAY -> {
-                // Waking on Sunday morning (e.g. 04:27 or 05:44) -> next anchor is Monday 01:00 STATE_BRIDGE_TO_WORK
-                if (localTime.isBefore(config.wkndCoreStart)) {
+                // If waking on Sunday morning (or just before 01:00 after a long Saturday crash),
+                // target Monday 01:00 STATE_BRIDGE_TO_WORK
+                if (localTime.isBefore(config.wkndCoreStart) && estimatedCycles < 2) {
                     val todayAnchor = wakeTime.toLocalDate()
                         .atTime(config.wkndCoreStart)
                         .atZone(wakeTime.zone)
@@ -189,7 +191,7 @@ class DeviationRecoveryCalculator(
                 }
             }
             DayOfWeek.MONDAY -> {
-                if (localTime.isBefore(config.monBridgeStart)) {
+                if (localTime.isBefore(config.monBridgeStart) && estimatedCycles < 2) {
                     val bridgeAnchor = wakeTime.toLocalDate()
                         .atTime(config.monBridgeStart)
                         .atZone(wakeTime.zone)
@@ -207,7 +209,6 @@ class DeviationRecoveryCalculator(
                 }
             }
             else -> {
-                // Tue - Fri
                 if (localTime.isBefore(config.workCoreStart)) {
                     val todayWorkCore = wakeTime.toLocalDate()
                         .atTime(config.workCoreStart)
@@ -274,11 +275,11 @@ class DeviationRecoveryCalculator(
                 stepNumber = 1,
                 windowLabel = "${formatDayTime(wakeTime)} – ${formatDayTime(nextAnchorTime)}",
                 title = if (enforceZeroNapLockout) {
-                    "Enforce Strict Zero-Nap Lockout (${formatDuration(timeUntilNextAnchor)})"
+                    "Stay Awake — Skip Daytime Naps (${formatDuration(timeUntilNextAnchor)})"
                 } else {
-                    "Maintain Scheduled Wake Window (${formatDuration(timeUntilNextAnchor)})"
+                    "Stay Awake Until Next Bedtime (${formatDuration(timeUntilNextAnchor)})"
                 },
-                description = "Any daytime or evening nap will bleed off homeostatic sleep pressure and prevent sleep onset at ${formatTime(nextAnchorTime)}.",
+                description = "Skipping naps today makes sure you're tired enough to fall asleep right at ${formatTime(nextAnchorTime)}.",
                 isCriticalGuardrail = enforceZeroNapLockout
             )
         )
@@ -292,8 +293,8 @@ class DeviationRecoveryCalculator(
                 RecoveryStep(
                     stepNumber = 2,
                     windowLabel = "${formatDayTime(nextAnchorTime)} – ${formatDayTime(postOvernightWake2Cycle)}",
-                    title = "Execute ${nextAnchorState.codeName} (2 Cycles / 3h 14m)",
-                    description = "Crucial Rule: Do NOT take a 3-cycle (4h 44m) sleep here; waking at 05:44 fully rested leaves under 7 hours before 12:30, causing insomnia during Monday's pre-shift core block.",
+                    title = "Take Short Reset Sleep (2 Cycles / 3h 14m)",
+                    description = "Important: Cap this night sleep at 3h 14m (waking at 04:14 AM). If you sleep 4h 44m and wake at 05:44 AM, you won't be tired enough to sleep at 12:30 PM before Monday's shift.",
                     isCriticalGuardrail = true
                 )
             )
@@ -303,8 +304,8 @@ class DeviationRecoveryCalculator(
                 RecoveryStep(
                     stepNumber = 3,
                     windowLabel = "${formatDayTime(postOvernightWake2Cycle)} – ${formatDayTime(nextWorkCoreAfterOvernight)}",
-                    title = "Accumulate Homeostatic Pressure (${formatDuration(pressureWindow)})",
-                    description = "Remain awake from ${formatTime(postOvernightWake2Cycle)} to ${formatTime(nextWorkCoreAfterOvernight)} (~8.25h) to lock back into the afternoon anchor.",
+                    title = "Stay Awake Monday Morning (${formatDuration(pressureWindow)})",
+                    description = "Stay up from ${formatTime(postOvernightWake2Cycle)} to ${formatTime(nextWorkCoreAfterOvernight)} (~8.25h) so you can fall asleep easily for your afternoon sleep.",
                     isCriticalGuardrail = false
                 )
             )
@@ -314,8 +315,8 @@ class DeviationRecoveryCalculator(
                 RecoveryStep(
                     stepNumber = 4,
                     windowLabel = "${formatDayTime(nextWorkCoreAfterOvernight)} – ${formatDayTime(workCoreEnd)}",
-                    title = "Execute STATE_WORK_CORE (3 Cycles / 4h 44m)",
-                    description = "Full 3-cycle core anchor (12:30 – 17:14/17:15) prior to the 21:00 work shift.",
+                    title = "Afternoon Workday Sleep (3 Cycles / 4h 44m)",
+                    description = "Full 4h 44m afternoon sleep (12:30 PM – 5:14 PM) before your 9:00 PM work shift.",
                     isCriticalGuardrail = false
                 )
             )
@@ -330,7 +331,7 @@ class DeviationRecoveryCalculator(
                 RecoveryStep(
                     stepNumber = 2,
                     windowLabel = "${formatDayTime(nextAnchorTime)} – ${formatDayTime(blockEnd)}",
-                    title = "Execute ${nextAnchorState.codeName} (${nextAnchorState.durationLabel})",
+                    title = "${nextAnchorState.title} (${nextAnchorState.durationLabel})",
                     description = nextAnchorState.systemRulesSummary,
                     isCriticalGuardrail = true
                 )
@@ -359,7 +360,7 @@ class DeviationRecoveryCalculator(
             return DeviationInput(
                 sleepStartTimestamp = sleepStart,
                 actualWakeTimestamp = actualWake,
-                triggerReason = "Oct 17–18 Incident: 20:00 accidental 20m nap converted into 5-cycle core sleep (woke 04:27 Sun)"
+                triggerReason = "Oct 17–18 Incident: 20:00 accidental 20m nap converted into 5-cycle sleep (woke 04:27 Sun)"
             )
         }
 

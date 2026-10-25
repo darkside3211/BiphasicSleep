@@ -31,13 +31,13 @@ enum class SimulationPreset(
 ) {
     LIVE_SYSTEM_CLOCK(
         label = "Live System Clock",
-        subtitle = "Real-time device clock",
+        subtitle = "Real-time phone clock",
         simulatedDateTime = null,
         simulatedLastWakeTime = null
     ),
     WORK_CORE_MON_1230(
-        label = "Work Core (Mon 12:30)",
-        subtitle = "Launch Window Open (11:30–14:00) • Only 3-Cycle Core (+284m) Unlocked",
+        label = "Workday Afternoon Sleep (Mon 12:30)",
+        subtitle = "On-Time Sleep Window (11:30–14:00) • 4h 44m Full Sleep Recommended",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 19),
             LocalTime.of(12, 30),
@@ -45,8 +45,8 @@ enum class SimulationPreset(
         )
     ),
     INCIDENT_2_POST_BRIDGE_COOLDOWN_0430(
-        label = "Incident #2: Post-Bridge Cooldown (Mon 04:30)",
-        subtitle = "Rule 2 Active: 90m Anti-Backslide Post-Wake Nap Hard-Lock (04:14–05:44)",
+        label = "Just Woke Up Cooldown (Mon 04:30)",
+        subtitle = "Confirmed Wake at 04:14 • 90m Post-Wake Cooldown Active (04:14–05:44)",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 19),
             LocalTime.of(4, 30),
@@ -59,8 +59,8 @@ enum class SimulationPreset(
         )
     ),
     INCIDENT_2_WAKE_LOCKOUT_0605(
-        label = "Incident #2: Wake Lockout (Mon 06:05)",
-        subtitle = "Mandatory 04:14–11:30 Wake Lockout (6h 25m to 12:30) • Alternative Cycles Blocked",
+        label = "Morning Awake Window (Mon 06:05)",
+        subtitle = "6h 25m until 12:30 PM Sleep • 20m Power Nap Eligible",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 19),
             LocalTime.of(6, 5),
@@ -73,8 +73,8 @@ enum class SimulationPreset(
         )
     ),
     PRE_ANCHOR_CUTOFF_MON_0830(
-        label = "Pre-Anchor Cutoff (Mon 08:30)",
-        subtitle = "Rule 1 Active: < 4.5h before 12:30 Core Anchor • 20m Nap Hard-Locked",
+        label = "Too Close to Bedtime (Mon 08:30)",
+        subtitle = "< 4h post-nap before 12:30 PM Sleep • 20m Nap Locked to Protect Sleep Drive",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 19),
             LocalTime.of(8, 30),
@@ -87,8 +87,8 @@ enum class SimulationPreset(
         )
     ),
     WORK_NAP_TUE_0115(
-        label = "Mid-Shift Flush (Tue 01:15)",
-        subtitle = "Mid-Shift 20m Adenosine Flush Unlocked • Caffeine Gate at 02:00",
+        label = "Night Shift 20m Nap (Tue 01:15)",
+        subtitle = "Sliding Shift Break Nap Unlocked • Wait Until After Nap for Caffeine",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 20),
             LocalTime.of(1, 15),
@@ -96,8 +96,8 @@ enum class SimulationPreset(
         )
     ),
     SUNGLASSES_COMMUTE_0730(
-        label = "Post-Shift Commute (Wed 07:30)",
-        subtitle = "06:00–09:00 Dark Sunglasses Daylight Blunting Before 12:30 Sleep",
+        label = "Morning Drive Home (Wed 07:30)",
+        subtitle = "06:00–09:00 Wear Dark Sunglasses Before Afternoon Sleep",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 21),
             LocalTime.of(7, 30),
@@ -105,8 +105,8 @@ enum class SimulationPreset(
         )
     ),
     SAT_BRIDGE_0800(
-        label = "Weekend Bridge #1 (Sat 08:00)",
-        subtitle = "Launch Window Open (06:30–09:30) • Only 2-Cycle Bridge (+194m) Unlocked",
+        label = "Saturday Morning Sleep (Sat 08:00)",
+        subtitle = "Post-Shift Window Open (06:30–09:30) • 3h 14m Short Sleep Recommended",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 17),
             LocalTime.of(8, 0),
@@ -114,8 +114,8 @@ enum class SimulationPreset(
         )
     ),
     SAT_BOREDOM_LOCKOUT_2000(
-        label = "Incident #1: Boredom Danger Zone (Sat 20:00)",
-        subtitle = "Rule 3 Active: 18:00–01:00 Nap Hard-Lock Before 01:00 Anchor",
+        label = "Weekend Evening Danger Zone (Sat 20:00)",
+        subtitle = "18:00–01:00 Evening Nap Lockout Before 01:00 AM Bedtime",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 17),
             LocalTime.of(20, 0),
@@ -123,8 +123,8 @@ enum class SimulationPreset(
         )
     ),
     OCT_18_INCIDENT_WAKE_0427(
-        label = "Oct 18 Incident Wake (Sun 04:27)",
-        subtitle = "Woke After 5-Cycle Accidental Nap -> 20h 33m Zero-Nap Lockout",
+        label = "Sunday Recovery After 10h Crash (Sun 04:27)",
+        subtitle = "Woke After 5-Cycle Crash -> Stay Awake Until 01:00 AM Monday",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 18),
             LocalTime.of(4, 27),
@@ -132,8 +132,8 @@ enum class SimulationPreset(
         )
     ),
     MON_BRIDGE_0100(
-        label = "Pre-Work Bridge #2 (Mon 01:00)",
-        subtitle = "Launch Window Open (00:00–02:30) • Only 2-Cycle Bridge (+194m) Unlocked",
+        label = "Sunday Night Reset Sleep (Mon 01:00)",
+        subtitle = "Overnight Window Open (00:00–02:30) • 3h 14m Short Sleep Before Monday",
         simulatedDateTime = ZonedDateTime.of(
             LocalDate.of(2026, 10, 19),
             LocalTime.of(1, 0),
@@ -148,6 +148,8 @@ data class ProtocolUiState(
     val currentClock: ZonedDateTime = ZonedDateTime.now(),
     val lastWakeTimestamp: ZonedDateTime? = null,
     val completedAnchorTimestamp: ZonedDateTime? = null,
+    val completedNapTimestamp: ZonedDateTime? = null,
+    val selectedCustomCycleBlock: SleepBlockType? = null,
     val phaseEvaluation: PhaseEvaluation,
     val deviationInput: DeviationInput,
     val computedDeviationPlan: DeviationRecoveryPlan,
@@ -171,7 +173,9 @@ class BiphasicProtocolViewModel : ViewModel() {
             currentClock = initialNow,
             lastWakeTimestamp = null,
             completedAnchorTimestamp = null,
-            phaseEvaluation = initialMachine.evaluate(initialNow, null, null, null),
+            completedNapTimestamp = null,
+            selectedCustomCycleBlock = null,
+            phaseEvaluation = initialMachine.evaluate(initialNow, null, null, null, null),
             deviationInput = initialIncidentInput,
             computedDeviationPlan = initialIncidentPlan,
             isDeviationOverrideAppliedToDeck = false
@@ -189,39 +193,67 @@ class BiphasicProtocolViewModel : ViewModel() {
 
         viewModelScope.launch {
             HybridAlarmScheduler.lastVerifiedWakeMillis.collect { wakeMillis ->
-                if (wakeMillis != null) {
-                    val wakeDt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(wakeMillis), ZoneId.systemDefault())
-                    recordWakeEvent(wakeDt)
+                val wakeDt = wakeMillis?.let { ZonedDateTime.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault()) }
+                _uiState.update { current ->
+                    recomputeState(current.copy(lastWakeTimestamp = wakeDt))
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            HybridAlarmScheduler.lastCompletedAnchorMillis.collect { anchorMillis ->
+                val anchorDt = anchorMillis?.let { ZonedDateTime.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault()) }
+                _uiState.update { current ->
+                    recomputeState(current.copy(completedAnchorTimestamp = anchorDt, lastWakeTimestamp = anchorDt ?: current.lastWakeTimestamp))
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            HybridAlarmScheduler.lastCompletedNapMillis.collect { napMillis ->
+                val napDt = napMillis?.let { ZonedDateTime.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault()) }
+                _uiState.update { current ->
+                    recomputeState(current.copy(completedNapTimestamp = napDt, lastWakeTimestamp = napDt ?: current.lastWakeTimestamp))
                 }
             }
         }
     }
 
-    fun refreshEvaluation() {
-        _uiState.update { current ->
-            val effectiveClock = current.activeSimulationPreset.simulatedDateTime ?: ZonedDateTime.now()
-            val effectiveLastWake = current.activeSimulationPreset.simulatedLastWakeTime ?: current.lastWakeTimestamp
-            val machine = CircadianStateMachine(current.config)
-            val calculator = DeviationRecoveryCalculator(current.config)
-            val plan = calculator.evaluateDeviation(current.deviationInput)
-            val appliedOverride = if (current.isDeviationOverrideAppliedToDeck) plan else null
-            current.copy(
-                currentClock = effectiveClock,
-                computedDeviationPlan = plan,
-                phaseEvaluation = machine.evaluate(
-                    now = effectiveClock,
-                    activeDeviation = appliedOverride,
-                    lastActualWakeTime = effectiveLastWake,
-                    completedAnchorAt = current.completedAnchorTimestamp
-                )
+    private fun recomputeState(current: ProtocolUiState): ProtocolUiState {
+        val effectiveClock = current.activeSimulationPreset.simulatedDateTime ?: ZonedDateTime.now()
+        val effectiveLastWake = current.activeSimulationPreset.simulatedLastWakeTime ?: current.lastWakeTimestamp
+        val effectiveCompletedAnchor = current.activeSimulationPreset.simulatedLastWakeTime ?: current.completedAnchorTimestamp
+        val machine = CircadianStateMachine(current.config)
+        val calculator = DeviationRecoveryCalculator(current.config)
+        val plan = calculator.evaluateDeviation(current.deviationInput)
+        val appliedOverride = if (current.isDeviationOverrideAppliedToDeck) plan else null
+        return current.copy(
+            currentClock = effectiveClock,
+            computedDeviationPlan = plan,
+            phaseEvaluation = machine.evaluate(
+                now = effectiveClock,
+                activeDeviation = appliedOverride,
+                lastActualWakeTime = effectiveLastWake,
+                completedAnchorAt = effectiveCompletedAnchor,
+                completedNapAt = current.completedNapTimestamp
             )
+        )
+    }
+
+    fun refreshEvaluation() {
+        _uiState.update { current -> recomputeState(current) }
+    }
+
+    fun selectCustomCycleBlock(blockType: SleepBlockType?) {
+        _uiState.update { current ->
+            current.copy(selectedCustomCycleBlock = blockType)
         }
     }
 
     fun selectSimulationPreset(preset: SimulationPreset, applyIncidentOverride: Boolean = false) {
         _uiState.update { current ->
             val effectiveClock = preset.simulatedDateTime ?: ZonedDateTime.now()
-            val effectiveLastWake = preset.simulatedLastWakeTime ?: current.lastWakeTimestamp
+            val effectiveLastWake = preset.simulatedLastWakeTime
             val machine = CircadianStateMachine(current.config)
             val calculator = DeviationRecoveryCalculator(current.config)
             val shouldApplyOverride = applyIncidentOverride ||
@@ -233,12 +265,16 @@ class BiphasicProtocolViewModel : ViewModel() {
                 activeSimulationPreset = preset,
                 currentClock = effectiveClock,
                 lastWakeTimestamp = effectiveLastWake,
+                completedAnchorTimestamp = effectiveLastWake,
+                completedNapTimestamp = null,
+                selectedCustomCycleBlock = null,
                 isDeviationOverrideAppliedToDeck = shouldApplyOverride,
                 phaseEvaluation = machine.evaluate(
                     now = effectiveClock,
                     activeDeviation = activeOverride,
                     lastActualWakeTime = effectiveLastWake,
-                    completedAnchorAt = current.completedAnchorTimestamp
+                    completedAnchorAt = effectiveLastWake,
+                    completedNapAt = null
                 ),
                 lastStatusToast = "Clock set to: ${preset.label}"
             )
@@ -258,6 +294,7 @@ class BiphasicProtocolViewModel : ViewModel() {
                 activeSimulationPreset = preset,
                 currentClock = effectiveClock,
                 lastWakeTimestamp = incidentInput.actualWakeTimestamp,
+                completedAnchorTimestamp = incidentInput.actualWakeTimestamp,
                 deviationInput = incidentInput,
                 computedDeviationPlan = plan,
                 isDeviationOverrideAppliedToDeck = true,
@@ -265,9 +302,10 @@ class BiphasicProtocolViewModel : ViewModel() {
                     now = effectiveClock,
                     activeDeviation = plan,
                     lastActualWakeTime = incidentInput.actualWakeTimestamp,
-                    completedAnchorAt = null
+                    completedAnchorAt = incidentInput.actualWakeTimestamp,
+                    completedNapAt = null
                 ),
-                lastStatusToast = "Oct 17–18 Incident Recovery Applied (20h 33m Lockout)"
+                lastStatusToast = "Oct 17–18 Incident Recovery Applied (20h 33m Stay-Awake Plan)"
             )
         }
     }
@@ -278,51 +316,89 @@ class BiphasicProtocolViewModel : ViewModel() {
 
     fun recordWakeEvent(wakeDateTime: ZonedDateTime) {
         _uiState.update { current ->
-            val machine = CircadianStateMachine(current.config)
-            val appliedOverride = if (current.isDeviationOverrideAppliedToDeck) current.computedDeviationPlan else null
-            current.copy(
-                lastWakeTimestamp = wakeDateTime,
-                phaseEvaluation = machine.evaluate(
-                    now = current.currentClock,
-                    activeDeviation = appliedOverride,
-                    lastActualWakeTime = wakeDateTime,
-                    completedAnchorAt = current.completedAnchorTimestamp
-                ),
+            val updated = recomputeState(
+                current.copy(
+                    lastWakeTimestamp = wakeDateTime,
+                    completedAnchorTimestamp = wakeDateTime
+                )
+            )
+            updated.copy(
                 lastStatusToast = "Wake logged at ${DeviationRecoveryCalculator.formatTime(wakeDateTime)} • 90m Cooldown Started"
             )
         }
     }
 
-    fun recordAnchorCompleted(completedAt: ZonedDateTime) {
+    fun recordAnchorCompleted(completedAt: ZonedDateTime, context: Context? = null) {
+        HybridAlarmScheduler.recordSessionCompletion(
+            context = context,
+            blockType = SleepBlockType.CORE_3_CYCLES,
+            completedAtMillis = completedAt.toInstant().toEpochMilli()
+        )
         _uiState.update { current ->
+            val updated = recomputeState(
+                current.copy(
+                    completedAnchorTimestamp = completedAt,
+                    lastWakeTimestamp = completedAt,
+                    selectedCustomCycleBlock = null
+                )
+            )
+            updated.copy(
+                lastStatusToast = "Sleep marked complete at ${DeviationRecoveryCalculator.formatTime(completedAt)} • 90m Cooldown Active"
+            )
+        }
+    }
+
+    fun recordNapCompleted(completedAt: ZonedDateTime, context: Context? = null) {
+        HybridAlarmScheduler.recordSessionCompletion(
+            context = context,
+            blockType = SleepBlockType.FLUSH_NAP_20M,
+            completedAtMillis = completedAt.toInstant().toEpochMilli()
+        )
+        _uiState.update { current ->
+            val updated = recomputeState(
+                current.copy(
+                    completedNapTimestamp = completedAt,
+                    lastWakeTimestamp = completedAt
+                )
+            )
+            updated.copy(
+                lastStatusToast = "20m Nap marked complete at ${DeviationRecoveryCalculator.formatTime(completedAt)}"
+            )
+        }
+    }
+
+    fun clearCompletedSessionHistory(context: Context? = null) {
+        HybridAlarmScheduler.clearPersistedSessionState(context)
+        _uiState.update { current ->
+            val clearedPreset = if (current.activeSimulationPreset.simulatedLastWakeTime != null) {
+                current.activeSimulationPreset
+            } else {
+                current.activeSimulationPreset
+            }
             val machine = CircadianStateMachine(current.config)
             val appliedOverride = if (current.isDeviationOverrideAppliedToDeck) current.computedDeviationPlan else null
             current.copy(
-                completedAnchorTimestamp = completedAt,
+                activeSimulationPreset = clearedPreset,
+                lastWakeTimestamp = null,
+                completedAnchorTimestamp = null,
+                completedNapTimestamp = null,
+                selectedCustomCycleBlock = null,
                 phaseEvaluation = machine.evaluate(
                     now = current.currentClock,
                     activeDeviation = appliedOverride,
-                    lastActualWakeTime = current.lastWakeTimestamp,
-                    completedAnchorAt = completedAt
+                    lastActualWakeTime = null,
+                    completedAnchorAt = null,
+                    completedNapAt = null
                 ),
-                lastStatusToast = "Anchor completed • Transitioned to STATE_WAKE_LOCKOUT"
+                lastStatusToast = "Cleared logged sleep/nap state • Sleep options unlocked"
             )
         }
     }
 
     fun toggleApplyDeviationToDeck(enabled: Boolean) {
         _uiState.update { current ->
-            val machine = CircadianStateMachine(current.config)
-            val override = if (enabled) current.computedDeviationPlan else null
-            val effectiveLastWake = current.activeSimulationPreset.simulatedLastWakeTime ?: current.lastWakeTimestamp
-            current.copy(
-                isDeviationOverrideAppliedToDeck = enabled,
-                phaseEvaluation = machine.evaluate(
-                    now = current.currentClock,
-                    activeDeviation = override,
-                    lastActualWakeTime = effectiveLastWake,
-                    completedAnchorAt = current.completedAnchorTimestamp
-                ),
+            val updated = recomputeState(current.copy(isDeviationOverrideAppliedToDeck = enabled))
+            updated.copy(
                 lastStatusToast = if (enabled) {
                     "Recovery Override active on Sleep screen"
                 } else {
@@ -372,7 +448,11 @@ class BiphasicProtocolViewModel : ViewModel() {
                 triggerReason = "Logged Real-Time Wake Event"
             )
             val updated = updateDeviationInputInternal(current, newInput)
-            updated.copy(lastWakeTimestamp = now)
+            updated.copy(
+                lastWakeTimestamp = now,
+                completedAnchorTimestamp = now,
+                lastStatusToast = "Logged wake-up at ${DeviationRecoveryCalculator.formatTime(now)}"
+            )
         }
     }
 
@@ -408,42 +488,13 @@ class BiphasicProtocolViewModel : ViewModel() {
         current: ProtocolUiState,
         newInput: DeviationInput
     ): ProtocolUiState {
-        val calculator = DeviationRecoveryCalculator(current.config)
-        val newPlan = calculator.evaluateDeviation(newInput)
-        val machine = CircadianStateMachine(current.config)
-        val activeOverride = if (current.isDeviationOverrideAppliedToDeck) newPlan else null
-        val effectiveLastWake = current.activeSimulationPreset.simulatedLastWakeTime ?: current.lastWakeTimestamp
-
-        return current.copy(
-            deviationInput = newInput,
-            computedDeviationPlan = newPlan,
-            phaseEvaluation = machine.evaluate(
-                now = current.currentClock,
-                activeDeviation = activeOverride,
-                lastActualWakeTime = effectiveLastWake,
-                completedAnchorAt = current.completedAnchorTimestamp
-            )
-        )
+        return recomputeState(current.copy(deviationInput = newInput))
     }
 
     fun updateConfig(transform: (SleepProtocolConfig) -> SleepProtocolConfig) {
         _uiState.update { current ->
             val newConfig = transform(current.config)
-            val machine = CircadianStateMachine(newConfig)
-            val calculator = DeviationRecoveryCalculator(newConfig)
-            val newPlan = calculator.evaluateDeviation(current.deviationInput)
-            val activeOverride = if (current.isDeviationOverrideAppliedToDeck) newPlan else null
-            val effectiveLastWake = current.activeSimulationPreset.simulatedLastWakeTime ?: current.lastWakeTimestamp
-            current.copy(
-                config = newConfig,
-                computedDeviationPlan = newPlan,
-                phaseEvaluation = machine.evaluate(
-                    now = current.currentClock,
-                    activeDeviation = activeOverride,
-                    lastActualWakeTime = effectiveLastWake,
-                    completedAnchorAt = current.completedAnchorTimestamp
-                )
-            )
+            recomputeState(current.copy(config = newConfig))
         }
     }
 

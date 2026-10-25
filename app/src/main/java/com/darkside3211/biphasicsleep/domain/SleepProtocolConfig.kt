@@ -5,12 +5,13 @@ import java.time.LocalTime
 
 /**
  * Core Sleep Constants & Timing Parameters from Section 1 of the
- * Biphasic Sleep Anchoring Protocol (v1.0).
+ * Biphasic Sleep Anchoring Protocol (v2.2 Event-Driven & Dynamic Proximity).
  *
  * Calculates alarm triggers using fixed 90-minute ultradian sleep cycles
  * plus a constant 14-minute sleep onset latency buffer:
  * - Core_Block_3_Cycles: 284 minutes (4h 44m = 3 * 90 + 14)
  * - Bridge_Block_2_Cycles: 194 minutes (3h 14m = 2 * 90 + 14)
+ * - Recovery_Block_1_Cycle: 104 minutes (1h 44m = 1 * 90 + 14)
  * - Adenosine_Flush_Nap: 20 minutes (Stage 1/2 light sleep cap)
  */
 data class SleepProtocolConfig(
@@ -24,15 +25,20 @@ data class SleepProtocolConfig(
     val monBridgeStart: LocalTime = LocalTime.of(1, 0),
     val shiftStart: LocalTime = LocalTime.of(21, 0),
     val shiftEnd: LocalTime = LocalTime.of(6, 0),
+    val weekdayCommuteReferenceTime: LocalTime = LocalTime.of(18, 0), // 6:00 PM non-rigid commute reference
     val sunglassesWindowStart: LocalTime = LocalTime.of(6, 0),
     val sunglassesWindowEnd: LocalTime = LocalTime.of(9, 0),
     val caffeinePermittedTime: LocalTime = LocalTime.of(2, 0),
     val circadianNadirTime: LocalTime = LocalTime.of(3, 0),
     val boredomZoneStart: LocalTime = LocalTime.of(18, 0),
     val boredomZoneEnd: LocalTime = LocalTime.of(1, 0), // 18:00 - 01:00 weekend evening danger zone
-    // v2.0 Timing Constants & Hard-Lock Guardrails (Section 1)
-    val preAnchorNapCutoffMinutes: Int = 270, // 4.5 hours minimum wakefulness required before any Core or Bridge anchor
-    val postWakeCooldownMinutes: Int = 90, // 90-minute anti-backslide lockout immediately following any Core or Bridge wake-up
+    // v2.0 / v2.2 Timing Constants & Dynamic Proximity Guardrails
+    val preAnchorNapCutoffMinutes: Int = 270, // Legacy v2.0 constant (4.5h)
+    val napProximityCutoffMinutes: Int = 240, // v2.2: 4.0h proximity cutoff after 20m nap completion
+    val postWakeCooldownMinutes: Int = 90, // 90-minute anti-backslide lockout following confirmed wake-up
+    val standardWakeBufferMinutes: Int = 420, // 7h 00m target homeostatic wake buffer before next core anchor
+    val minimumWakeBufferMinutes: Int = 360, // 6h 00m minimum homeostatic wake buffer
+    val maxAnchorPushbackMinutes: Int = 60, // Up to +1h flexible anchor pushback (e.g., 01:00 -> 02:00)
     // Launch Windows (Section 4.A & 4.B)
     val workCoreLaunchStart: LocalTime = LocalTime.of(11, 30),
     val workCoreLaunchEnd: LocalTime = LocalTime.of(14, 0),
@@ -61,11 +67,18 @@ data class SleepProtocolConfig(
     val bridgeBlock2CyclesMinutes: Int
         get() = (2 * cycleDurationMinutes) + latencyBufferMinutes
 
+    /** 1 * 90 + 14 = 104 minutes (1 hour 44 minutes) */
+    val recoveryBlock1CycleMinutes: Int
+        get() = (1 * cycleDurationMinutes) + latencyBufferMinutes
+
     val coreBlock3CyclesDuration: Duration
         get() = Duration.ofMinutes(coreBlock3CyclesMinutes.toLong())
 
     val bridgeBlock2CyclesDuration: Duration
         get() = Duration.ofMinutes(bridgeBlock2CyclesMinutes.toLong())
+
+    val recoveryBlock1CycleDuration: Duration
+        get() = Duration.ofMinutes(recoveryBlock1CycleMinutes.toLong())
 
     val flushNapDuration: Duration
         get() = Duration.ofMinutes(flushNapMinutes.toLong())
@@ -88,6 +101,7 @@ data class SleepProtocolConfig(
     fun durationMinutesFor(blockType: SleepBlockType): Int = when (blockType) {
         SleepBlockType.CORE_3_CYCLES -> coreBlock3CyclesMinutes
         SleepBlockType.BRIDGE_2_CYCLES -> bridgeBlock2CyclesMinutes
+        SleepBlockType.RECOVERY_1_CYCLE -> recoveryBlock1CycleMinutes
         SleepBlockType.FLUSH_NAP_20M -> flushNapMinutes
     }
 

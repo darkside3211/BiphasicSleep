@@ -4,7 +4,7 @@ import java.time.Duration
 import java.time.ZonedDateTime
 
 /**
- * The 5 canonical states in the Weekly State Machine Architecture (Section 2).
+ * The canonical states in the Weekly State Machine Architecture (v2.2 Event-Driven + Plain-English UI).
  */
 enum class ProtocolStateId(
     val codeName: String,
@@ -18,68 +18,78 @@ enum class ProtocolStateId(
 ) {
     STATE_WORK_CORE(
         codeName = "STATE_WORK_CORE",
-        title = "Workday Core Anchor",
+        title = "Afternoon Workday Sleep",
         dayPhaseLabel = "Mon – Fri (Afternoon)",
-        modeTypeLabel = "3-Cycle Core Anchor",
-        scheduleWindowLabel = "12:30 – 17:14 (17:15)",
+        modeTypeLabel = "Full 3-Cycle Sleep (4h 44m)",
+        scheduleWindowLabel = "Target: 12:30 – 17:14",
         durationLabel = "4h 44m (284m)",
         isWeekendMode = false,
-        systemRulesSummary = "Primary workday sleep. Keep time-awake under 10h by 03:00. Wear dark sunglasses on commute home (06:00–09:00) to blunt daylight signaling."
+        systemRulesSummary = "Main sleep before your 21:00 work shift. Wear dark sunglasses on your morning commute home (06:00–09:00) so bright daylight doesn't make it hard to fall asleep."
     ),
     STATE_WORK_NAP(
         codeName = "STATE_WORK_NAP",
-        title = "Mid-Shift Adenosine Flush",
-        dayPhaseLabel = "Tue – Sat (Mid-Shift)",
-        modeTypeLabel = "Adenosine Flush",
-        scheduleWindowLabel = "01:15 – 01:35",
+        title = "20-Min Shift Power Nap",
+        dayPhaseLabel = "Tue – Sat (During Shift)",
+        modeTypeLabel = "20-Min Power Nap",
+        scheduleWindowLabel = "Flexible Shift Break (~01:15)",
         durationLabel = "20m",
         isWeekendMode = false,
-        systemRulesSummary = "Mandatory mid-shift nap to clear adenosine before the 03:00 circadian nadir. Delay sugar-free caffeine intake until 02:00."
+        systemRulesSummary = "Quick 20-minute nap during your shift break to clear brain fog before the 03:00 AM energy dip. Wait until after your nap (~02:00) to drink caffeine."
     ),
     STATE_BRIDGE_TO_WKND(
         codeName = "STATE_BRIDGE_TO_WKND",
-        title = "Saturday Morning Bridge #1",
+        title = "Saturday Morning Post-Shift Sleep",
         dayPhaseLabel = "Saturday (Morning)",
-        modeTypeLabel = "2-Cycle Bridge #1",
-        scheduleWindowLabel = "~08:00 – ~11:14",
+        modeTypeLabel = "Short 2-Cycle Sleep (3h 14m)",
+        scheduleWindowLabel = "Target: ~08:00 – ~11:14",
         durationLabel = "3h 14m (194m)",
         isWeekendMode = true,
-        systemRulesSummary = "Deliberately capped at 2 cycles (+14m latency). Leaves residual sleep pressure so the user can fall asleep at 01:00 Saturday night. Zero naps permitted all day."
+        systemRulesSummary = "Shorter 3h 14m morning sleep after Friday night shift so you have the afternoon free AND are still tired enough to sleep Saturday night at 01:00 AM."
     ),
     STATE_WKND_CORE(
         codeName = "STATE_WKND_CORE",
-        title = "Weekend Recovery Core Block",
-        dayPhaseLabel = "Sunday (Early AM / Sat Night)",
-        modeTypeLabel = "3-Cycle Weekend Block",
-        scheduleWindowLabel = "01:00 – 05:44",
+        title = "Saturday Night Full Sleep",
+        dayPhaseLabel = "Sat Night / Sun Early AM",
+        modeTypeLabel = "Full 3-Cycle Sleep (4h 44m)",
+        scheduleWindowLabel = "Target: 01:00 – 05:44",
         durationLabel = "4h 44m (284m)",
         isWeekendMode = true,
-        systemRulesSummary = "Full 3-cycle recovery sleep anchored late at 01:00 to preserve night-shift rhythm while granting Sunday daytime wakefulness. Zero naps permitted all day Sunday."
+        systemRulesSummary = "Full 4h 44m night sleep starting around 01:00 AM so you get all of Sunday daytime awake without flipping your night-shift clock upside down."
     ),
     STATE_BRIDGE_TO_WORK(
         codeName = "STATE_BRIDGE_TO_WORK",
-        title = "Monday Morning Bridge #2",
-        dayPhaseLabel = "Monday (Early AM / Sun Night)",
-        modeTypeLabel = "2-Cycle Bridge #2",
-        scheduleWindowLabel = "01:00 – 04:14",
+        title = "Sunday Night Reset Sleep",
+        dayPhaseLabel = "Sun Night / Mon Early AM",
+        modeTypeLabel = "Short 2-Cycle Sleep (3h 14m)",
+        scheduleWindowLabel = "Target: 01:00 – 04:14",
         durationLabel = "3h 14m (194m)",
         isWeekendMode = false,
-        systemRulesSummary = "Deliberately capped at 2 cycles (+14m latency). Waking at 04:14 guarantees ~8.25 hours of wakefulness before 12:30, creating sufficient sleep pressure to lock back into STATE_WORK_CORE on Monday afternoon."
+        systemRulesSummary = "Capped at 3h 14m (waking at 04:14 AM Monday). Staying awake from 04:14 AM to 12:30 PM (~8.25h) makes sure you're tired enough to fall asleep Monday afternoon before work."
+    ),
+    UNFULFILLED_ANCHOR_DELAYED(
+        codeName = "UNFULFILLED_ANCHOR_DELAYED",
+        title = "Late Sleep — Adjusted Duration",
+        dayPhaseLabel = "Flexible Late Arrival / Plans",
+        modeTypeLabel = "Dynamic Recovery Sleep",
+        scheduleWindowLabel = "Dynamic Step-Down (3 -> 2 -> 1 Cycles)",
+        durationLabel = "3h 14m / 1h 44m",
+        isWeekendMode = false,
+        systemRulesSummary = "You haven't logged sleep for this cycle yet. Automatically adjusts your sleep length so you don't oversleep 10 hours and pushes tonight's bedtime back up to +1h if needed."
     ),
     STATE_WAKE_LOCKOUT(
         codeName = "STATE_WAKE_LOCKOUT",
-        title = "Wake Lockout Active",
-        dayPhaseLabel = "Daily (Between Anchors)",
-        modeTypeLabel = "Homeostatic Pressure Build",
-        scheduleWindowLabel = "All non-sleep hours",
-        durationLabel = "Variable",
+        title = "Stay Awake Until Next Sleep",
+        dayPhaseLabel = "Awake Window (Between Sleeps)",
+        modeTypeLabel = "Building Sleep Drive",
+        scheduleWindowLabel = "Active after completing sleep",
+        durationLabel = "Awake",
         isWeekendMode = false,
-        systemRulesSummary = "Replaces Primary Anchor alarm card with WAKE LOCKOUT ACTIVE status card and live countdown to the next scheduled anchor."
+        systemRulesSummary = "Active after you finish your main sleep block (or when too close to your next bedtime). Staying awake now ensures you can fall asleep easily at your next target time."
     )
 }
 
 /**
- * The 3 dynamic cycle alarm trigger actions in Module 1.
+ * The dynamic cycle alarm trigger actions in Module 1 (v2.2).
  */
 enum class SleepBlockType(
     val ctaLabel: String,
@@ -89,24 +99,31 @@ enum class SleepBlockType(
     val requiresAntiBackslideByDefault: Boolean
 ) {
     CORE_3_CYCLES(
-        ctaLabel = "Arm 3-Cycle Core (+284m)",
-        shortTitle = "3-Cycle Core",
+        ctaLabel = "Start 4h 44m Sleep",
+        shortTitle = "3-Cycle Sleep (4h 44m)",
         cyclesCount = 3,
-        formulaDescription = "3 × 90m cycles + 14m latency = 284 min",
+        formulaDescription = "3 × 90m cycles + 14m to fall asleep = 4h 44m (284m)",
         requiresAntiBackslideByDefault = true
     ),
     BRIDGE_2_CYCLES(
-        ctaLabel = "Arm 2-Cycle Bridge (+194m)",
-        shortTitle = "2-Cycle Bridge",
+        ctaLabel = "Start 3h 14m Sleep",
+        shortTitle = "2-Cycle Sleep (3h 14m)",
         cyclesCount = 2,
-        formulaDescription = "2 × 90m cycles + 14m latency = 194 min",
+        formulaDescription = "2 × 90m cycles + 14m to fall asleep = 3h 14m (194m)",
+        requiresAntiBackslideByDefault = true
+    ),
+    RECOVERY_1_CYCLE(
+        ctaLabel = "Start 1h 44m Sleep",
+        shortTitle = "1-Cycle Rescue (1h 44m)",
+        cyclesCount = 1,
+        formulaDescription = "1 × 90m cycle + 14m to fall asleep = 1h 44m (104m)",
         requiresAntiBackslideByDefault = true
     ),
     FLUSH_NAP_20M(
-        ctaLabel = "Arm 20m Adenosine Flush (+20m)",
-        shortTitle = "20m Adenosine Flush",
+        ctaLabel = "Start 20m Power Nap",
+        shortTitle = "20m Power Nap",
         cyclesCount = 0,
-        formulaDescription = "Strict 20m Stage 1/2 light sleep cap",
+        formulaDescription = "20-minute light nap (wakes before deep sleep)",
         requiresAntiBackslideByDefault = true
     )
 }
@@ -156,10 +173,11 @@ data class WeekendLockoutStatus(
 )
 
 /**
- * Dynamic 20-Minute Nap Lockout Calculator models (Section 4.C).
+ * Dynamic 20-Minute Nap Lockout Calculator models (Section 4.C & v2.2 Sliding Window).
  */
 enum class NapLockoutRule {
     NONE_PERMITTED,
+    NAP_ALREADY_COMPLETED_IN_PERIOD,
     PRE_ANCHOR_4_5H_CUTOFF,
     POST_WAKE_90M_COOLDOWN,
     WEEKEND_EVENING_DANGER_ZONE,
@@ -175,12 +193,12 @@ data class NapLockoutEvaluation(
     val timeSinceLastWake: Duration?,
     val timeUntilNextAnchor: Duration,
     val nextAnchorTargetTime: ZonedDateTime,
-    val calculatedWakeTime: ZonedDateTime
+    val calculatedWakeTime: ZonedDateTime,
+    val isNapCompletedInCurrentPeriod: Boolean = false
 )
 
 /**
- * Primary Anchor Window status (Section 4.A & 4.B).
- * Enforces single-action buttons during launch windows and transitions to STATE_WAKE_LOCKOUT outside.
+ * Primary Anchor Window status (v2.2 Event-Driven + Dynamic Cycle Truncation).
  */
 data class PrimaryAnchorWindowStatus(
     val isInActiveLaunchWindow: Boolean,
@@ -191,11 +209,18 @@ data class PrimaryAnchorWindowStatus(
     val nextScheduledAnchorTime: ZonedDateTime,
     val countdownToNextAnchor: Duration,
     val wakeLockoutHeadline: String,
-    val wakeLockoutSubtext: String
+    val wakeLockoutSubtext: String,
+    val isUnfulfilledAnchorDelayed: Boolean = false,
+    val isAnchorCompletedForCurrentCycle: Boolean = false,
+    val nominalNextAnchorTime: ZonedDateTime = nextScheduledAnchorTime,
+    val isAnchorPushedBack: Boolean = false,
+    val delayedRecoveryHeadline: String? = null,
+    val leewayAdvisoryText: String? = null,
+    val availableCycleOptions: List<SleepActionOption> = emptyList()
 )
 
 /**
- * Full real-time evaluation of the user's current position in the Weekly State Machine (v2.0).
+ * Full real-time evaluation of the user's current position in the Weekly State Machine (v2.2).
  */
 data class PhaseEvaluation(
     val evaluatedAt: ZonedDateTime,
